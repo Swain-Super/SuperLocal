@@ -152,12 +152,25 @@ func (db *DB) PostMessage(senderID, convID, kind, body, fileID string, now time.
 
 	id := NewID(now)
 	err = db.withLockRetry(func() error {
-		_, execErr := db.sql.Exec(
+		tx, txErr := db.sql.Begin()
+		if txErr != nil {
+			return txErr
+		}
+		defer tx.Rollback()
+		if _, txErr = tx.Exec(
 			`INSERT INTO messages (id, conversation_id, sender_id, kind, body, file_id, created_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 			id, convID, senderID, kind, body, fileID, now.UnixMilli(),
-		)
-		return execErr
+		); txErr != nil {
+			return txErr
+		}
+		// 图片和文件与 BindFile 使用同一条更新：必须属于发送者，且 message_id 仍为空。
+		if kind == "image" || kind == "file" {
+			if txErr = bindOutgoing(tx, senderID, kind, fileID, id); txErr != nil {
+				return txErr
+			}
+		}
+		return tx.Commit()
 	})
 	if err != nil {
 		return Message{}, err
