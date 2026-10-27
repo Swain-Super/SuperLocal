@@ -403,6 +403,35 @@ func (db *DB) AddMembers(actorID, convID string, memberIDs []string, now time.Ti
 			return txErr
 		}
 		defer tx.Rollback()
+		// 提交前再确认群状态与创建者仍在成员表，避免 Leave/Dissolve 与加人交错。
+		var txType, txOwner string
+		var txDissolved int
+		txErr = tx.QueryRow(
+			`SELECT type, owner_id, dissolved FROM conversations WHERE id = ?`, convID,
+		).Scan(&txType, &txOwner, &txDissolved)
+		if txErr != nil {
+			if txErr == sql.ErrNoRows {
+				return fmt.Errorf("会话不存在")
+			}
+			return txErr
+		}
+		if txDissolved != 0 || txType != "group" {
+			return fmt.Errorf("会话不存在")
+		}
+		if actorID != txOwner {
+			return fmt.Errorf("只有创建者可以添加成员")
+		}
+		var actorMember int
+		txErr = tx.QueryRow(
+			`SELECT COUNT(*) FROM members WHERE conversation_id = ? AND user_id = ?`,
+			convID, actorID,
+		).Scan(&actorMember)
+		if txErr != nil {
+			return txErr
+		}
+		if actorMember == 0 {
+			return fmt.Errorf("只有创建者可以添加成员")
+		}
 		for _, userID := range fresh {
 			if _, txErr = tx.Exec(
 				`INSERT INTO members (conversation_id, user_id, joined_at) VALUES (?, ?, ?)`,
