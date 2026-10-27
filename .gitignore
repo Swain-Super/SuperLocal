@@ -33,5 +33,5 @@ go.work.sum
 # .vscode/
 
 # Local worktrees and subagent scratch
-.worktrees/
-.superpowers/
+.worktrees
+.superpowers
