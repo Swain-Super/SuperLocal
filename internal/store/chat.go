@@ -251,3 +251,316 @@ func (db *DB) peerUser(convID, selfID string) (User, error) {
 	}
 	return db.UserByID(peerID)
 }
+
+func normalizeGroupName(raw string) (string, error) {
+	name := strings.TrimSpace(raw)
+	if name == "" {
+		return "", fmt.Errorf("群名不能为空")
+	}
+	if utf8.RuneCountInString(name) > 40 {
+		return "", fmt.Errorf("群名最长 40 字")
+	}
+	return name, nil
+}
+
+// groupMemberIDs 把创建者放在首位，并去掉空值和重复成员。
+func groupMemberIDs(ownerID string, memberIDs []string) ([]string, error) {
+	seen := map[string]bool{ownerID: true}
+	out := []string{ownerID}
+	for _, id := range memberIDs {
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	if len(out) < 2 {
+		return nil, fmt.Errorf("至少再选择一名成员")
+	}
+	return out, nil
+}
+
+func (db *DB) CreateGroup(ownerID, name string, memberIDs []string, now time.Time) (string, error) {
+	name, err := normalizeGroupName(name)
+	if err != nil {
+		return "", err
+	}
+	owner, err := db.UserByID(ownerID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", fmt.Errorf("没有建群权限")
+		}
+		return "", err
+	}
+	if !owner.CanCreateGroup {
+		return "", fmt.Errorf("没有建群权限")
+	}
+	members, err := groupMemberIDs(ownerID, memberIDs)
+	if err != nil {
+		return "", err
+	}
+	for _, userID := range members[1:] {
+		u, userErr := db.UserByID(userID)
+		if userErr != nil {
+			if userErr == sql.ErrNoRows {
+				return "", fmt.Errorf("成员不存在")
+			}
+			return "", userErr
+		}
+		if u.Banned {
+			return "", fmt.Errorf("成员已被封禁")
+		}
+	}
+
+	id := NewID(now)
+	err = db.withLockRetry(func() error {
+		tx, txErr := db.sql.Begin()
+		if txErr != nil {
+			return txErr
+		}
+		defer tx.Rollback()
+		// 群的 direct_key 使用自己的 id，避免默认空字符串违反 UNIQUE。
+		if _, txErr = tx.Exec(
+			`INSERT INTO conversations (id, type, name, owner_id, direct_key, created_at) VALUES (?, 'group', ?, ?, ?, ?)`,
+			id, name, ownerID, id, now.UnixMilli(),
+		); txErr != nil {
+			return txErr
+		}
+		for _, userID := range members {
+			if _, txErr = tx.Exec(
+				`INSERT INTO members (conversation_id, user_id, joined_at) VALUES (?, ?, ?)`,
+				id, userID, now.UnixMilli(),
+			); txErr != nil {
+				return txErr
+			}
+		}
+		return tx.Commit()
+	})
+	if err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+func (db *DB) AddMembers(actorID, convID string, memberIDs []string, now time.Time) error {
+	var convType, ownerID string
+	var dissolved int
+	err := db.sql.QueryRow(
+		`SELECT type, owner_id, dissolved FROM conversations WHERE id = ?`, convID,
+	).Scan(&convType, &ownerID, &dissolved)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("会话不存在")
+		}
+		return err
+	}
+	if dissolved != 0 || convType != "group" {
+		return fmt.Errorf("会话不存在")
+	}
+	if actorID != ownerID {
+		return fmt.Errorf("只有创建者可以添加成员")
+	}
+	member, err := db.isMember(convID, actorID)
+	if err != nil {
+		return err
+	}
+	if !member {
+		return fmt.Errorf("只有创建者可以添加成员")
+	}
+
+	seen := map[string]bool{}
+	fresh := []string{}
+	for _, userID := range memberIDs {
+		if userID == "" || userID == actorID || seen[userID] {
+			continue
+		}
+		seen[userID] = true
+		already, memberErr := db.isMember(convID, userID)
+		if memberErr != nil {
+			return memberErr
+		}
+		if already {
+			continue
+		}
+		u, userErr := db.UserByID(userID)
+		if userErr != nil {
+			if userErr == sql.ErrNoRows {
+				return fmt.Errorf("成员不存在")
+			}
+			return userErr
+		}
+		if u.Banned {
+			return fmt.Errorf("成员已被封禁")
+		}
+		fresh = append(fresh, userID)
+	}
+	if len(fresh) == 0 {
+		return nil
+	}
+	return db.withLockRetry(func() error {
+		tx, txErr := db.sql.Begin()
+		if txErr != nil {
+			return txErr
+		}
+		defer tx.Rollback()
+		for _, userID := range fresh {
+			if _, txErr = tx.Exec(
+				`INSERT INTO members (conversation_id, user_id, joined_at) VALUES (?, ?, ?)`,
+				convID, userID, now.UnixMilli(),
+			); txErr != nil {
+				return txErr
+			}
+		}
+		return tx.Commit()
+	})
+}
+
+func (db *DB) Leave(userID, convID string) error {
+	var affected int64
+	err := db.withLockRetry(func() error {
+		res, execErr := db.sql.Exec(
+			`DELETE FROM members WHERE conversation_id = ? AND user_id = ?`,
+			convID, userID,
+		)
+		if execErr != nil {
+			return execErr
+		}
+		affected, execErr = res.RowsAffected()
+		return execErr
+	})
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return fmt.Errorf("不是会话成员")
+	}
+	return nil
+}
+
+func (db *DB) Dissolve(convID string) error {
+	return db.withLockRetry(func() error {
+		tx, txErr := db.sql.Begin()
+		if txErr != nil {
+			return txErr
+		}
+		defer tx.Rollback()
+		res, txErr := tx.Exec(
+			`UPDATE conversations SET dissolved = 1 WHERE id = ? AND type = 'group' AND dissolved = 0`,
+			convID,
+		)
+		if txErr != nil {
+			return txErr
+		}
+		n, txErr := res.RowsAffected()
+		if txErr != nil {
+			return txErr
+		}
+		if n == 0 {
+			return fmt.Errorf("会话不存在")
+		}
+		if _, txErr = tx.Exec(`DELETE FROM members WHERE conversation_id = ?`, convID); txErr != nil {
+			return txErr
+		}
+		return tx.Commit()
+	})
+}
+
+func (db *DB) Messages(userID, convID, afterID string) ([]Message, error) {
+	member, err := db.isMember(convID, userID)
+	if err != nil {
+		return nil, err
+	}
+	if !member {
+		return nil, fmt.Errorf("不是会话成员")
+	}
+	rows, err := db.sql.Query(`
+		SELECT m.id, m.conversation_id, m.sender_id, COALESCE(u.nickname, ''), m.kind, m.body, m.file_id, m.created_at
+		FROM messages m
+		LEFT JOIN users u ON u.id = m.sender_id
+		WHERE m.conversation_id = ? AND m.id > ?
+		ORDER BY m.id ASC`, convID, afterID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []Message{}
+	for rows.Next() {
+		var msg Message
+		var created int64
+		if err := rows.Scan(
+			&msg.ID, &msg.ConversationID, &msg.SenderID, &msg.SenderNickname,
+			&msg.Kind, &msg.Body, &msg.FileID, &created,
+		); err != nil {
+			return nil, err
+		}
+		msg.CreatedAt = unixMilliTime(created)
+		out = append(out, msg)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (db *DB) MarkRead(userID, convID, messageID string) error {
+	member, err := db.isMember(convID, userID)
+	if err != nil {
+		return err
+	}
+	if !member {
+		return fmt.Errorf("不是会话成员")
+	}
+	var msgConv string
+	err = db.sql.QueryRow(`SELECT conversation_id FROM messages WHERE id = ?`, messageID).Scan(&msgConv)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("消息不属于该会话")
+		}
+		return err
+	}
+	if msgConv != convID {
+		return fmt.Errorf("消息不属于该会话")
+	}
+	return db.withLockRetry(func() error {
+		_, execErr := db.sql.Exec(
+			`UPDATE members SET last_read_id = ? WHERE conversation_id = ? AND user_id = ?`,
+			messageID, convID, userID,
+		)
+		return execErr
+	})
+}
+
+func (db *DB) SearchUsers(query string) ([]PublicUser, error) {
+	rows, err := db.sql.Query(`
+		SELECT id, nickname, avatar_path FROM users
+		WHERE banned = 0 AND nickname LIKE '%' || ? || '%'
+		ORDER BY nickname, id
+		LIMIT 50`, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []PublicUser{}
+	for rows.Next() {
+		var id, nickname, avatar string
+		if err := rows.Scan(&id, &nickname, &avatar); err != nil {
+			return nil, err
+		}
+		out = append(out, Public(User{ID: id, Nickname: nickname, AvatarPath: avatar}))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (db *DB) isMember(convID, userID string) (bool, error) {
+	var n int
+	err := db.sql.QueryRow(
+		`SELECT COUNT(*) FROM members WHERE conversation_id = ? AND user_id = ?`,
+		convID, userID,
+	).Scan(&n)
+	return n != 0, err
+}
