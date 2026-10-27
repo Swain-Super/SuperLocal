@@ -95,6 +95,32 @@ func (db *DB) UserByID(id string) (User, error) {
 	return scanUser(db.sql.QueryRow(`SELECT `+userColumns+` FROM users WHERE id = ?`, id))
 }
 
+// UpdateUserAdmin 写回封禁、发言、发文件和建群四项权限。用户不存在时返回错误。
+func (db *DB) UpdateUserAdmin(id string, banned, canSend, canFile, canGroup bool) error {
+	return db.withLockRetry(func() error {
+		var n int
+		err := db.sql.QueryRow(`SELECT COUNT(*) FROM users WHERE id = ?`, id).Scan(&n)
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return fmt.Errorf("用户不存在")
+		}
+		_, err = db.sql.Exec(
+			`UPDATE users SET banned = ?, can_send_message = ?, can_send_file = ?, can_create_group = ? WHERE id = ?`,
+			boolToInt(banned), boolToInt(canSend), boolToInt(canFile), boolToInt(canGroup), id,
+		)
+		return err
+	})
+}
+
+func boolToInt(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
+}
+
 func (db *DB) userByKey(key string) (User, error) {
 	return scanUser(db.sql.QueryRow(`SELECT `+userColumns+` FROM users WHERE key = ?`, key))
 }

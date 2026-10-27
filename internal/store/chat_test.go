@@ -793,3 +793,95 @@ func unreadOf(list []ConversationView, id string) (int, bool) {
 	}
 	return 0, false
 }
+
+func TestPermissions(t *testing.T) {
+	db := openTestDB(t)
+	now := time.Unix(1_700_000_000, 0)
+	jia, err := db.LoginOrCreate("user-key-perm-jia", "甲", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	yi, err := db.LoginOrCreate("user-key-perm-yi", "乙", now.Add(time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	convID, err := db.OpenDirect(jia.ID, yi.ID, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := db.UpdateUserAdmin(jia.ID, true, false, false, false); err != nil {
+		t.Fatal(err)
+	}
+	got, err := db.UserByID(jia.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Key != jia.Key || got.Nickname != "甲" || !got.Banned || got.CanSendMessage || got.CanSendFile || got.CanCreateGroup {
+		t.Fatalf("%+v", got)
+	}
+	if _, err := db.PostMessage(jia.ID, convID, "text", "封禁后", "", now); err == nil {
+		t.Fatal("expected error for banned sender")
+	}
+
+	if err := db.UpdateUserAdmin(jia.ID, false, false, true, true); err != nil {
+		t.Fatal(err)
+	}
+	got, err = db.UserByID(jia.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Banned || got.CanSendMessage || !got.CanSendFile || !got.CanCreateGroup {
+		t.Fatalf("%+v", got)
+	}
+	if _, err := db.PostMessage(jia.ID, convID, "text", "禁言后", "", now); err == nil {
+		t.Fatal("expected error when CanSendMessage is false")
+	}
+
+	if err := db.UpdateUserAdmin(jia.ID, false, true, false, false); err != nil {
+		t.Fatal(err)
+	}
+	got, err = db.UserByID(jia.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Banned || !got.CanSendMessage || got.CanSendFile || got.CanCreateGroup {
+		t.Fatalf("%+v", got)
+	}
+	if _, err := db.PostMessage(jia.ID, convID, "image", "", "file-image", now); err == nil {
+		t.Fatal("expected error for image when CanSendFile is false")
+	}
+	if _, err := db.PostMessage(jia.ID, convID, "file", "notes.txt", "file-doc", now); err == nil {
+		t.Fatal("expected error for file when CanSendFile is false")
+	}
+	msg, err := db.PostMessage(jia.ID, convID, "text", "文字仍可发", "", now)
+	if err != nil || msg.Body != "文字仍可发" || msg.Kind != "text" {
+		t.Fatalf("%+v %v", msg, err)
+	}
+
+	if err := db.UpdateUserAdmin(yi.ID, true, true, true, true); err != nil {
+		t.Fatal(err)
+	}
+	peer, err := db.UserByID(yi.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !peer.Banned || !peer.CanSendMessage || !peer.CanSendFile || !peer.CanCreateGroup || peer.Nickname != "乙" {
+		t.Fatalf("%+v", peer)
+	}
+	if _, err := db.PostMessage(jia.ID, convID, "text", "对方被封", "", now); err == nil {
+		t.Fatal("expected error when the direct peer is banned")
+	}
+
+	if err := db.UpdateUserAdmin("missing-user", false, true, true, true); err == nil {
+		t.Fatal("expected error when updating a missing user")
+	}
+
+	var messageCount int
+	if err := db.SQL().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messageCount); err != nil {
+		t.Fatal(err)
+	}
+	if messageCount != 1 {
+		t.Fatalf("messages = %d, rejected sends were stored", messageCount)
+	}
+}

@@ -102,6 +102,9 @@ func (db *DB) PostMessage(senderID, convID, kind, body, fileID string, now time.
 	if !sender.CanSendMessage {
 		return Message{}, fmt.Errorf("没有发言权限")
 	}
+	if (kind == "image" || kind == "file") && !sender.CanSendFile {
+		return Message{}, fmt.Errorf("没有发文件权限")
+	}
 
 	var convType string
 	err = db.sql.QueryRow(
