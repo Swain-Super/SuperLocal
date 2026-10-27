@@ -55,7 +55,7 @@ func allowedImageMIME(mime string) bool {
 
 var errTooLarge = errors.New("文件超过大小限制")
 
-// writeLimited 用 LimitReader 多读 1 字节判断超限。失败时删除临时文件，不覆盖已有目标文件。
+// writeLimited 用 LimitReader 多读 1 字节判断超限。超限时删除临时文件，不改已有目标。
 func writeLimited(dir, rel string, r io.Reader, max int64) (int64, error) {
 	tmpName, err := newDiskID()
 	if err != nil {
@@ -89,11 +89,32 @@ func writeLimited(dir, rel string, r io.Reader, max int64) (int64, error) {
 		os.Remove(tmpPath)
 		return 0, err
 	}
-	if err := os.Rename(tmpPath, dest); err != nil {
-		os.Remove(tmpPath)
+	if err := replaceExisting(tmpPath, dest); err != nil {
 		return 0, err
 	}
 	return n, nil
+}
+
+// replaceExisting 把临时文件移到目标。目标已存在时 Rename 在 Windows 上会失败，
+// 这时删掉目标再移一次。仍然失败则删除临时文件并返回错误。
+func replaceExisting(tmpPath, dest string) error {
+	err := os.Rename(tmpPath, dest)
+	if err == nil {
+		return nil
+	}
+	if !os.IsExist(err) {
+		os.Remove(tmpPath)
+		return err
+	}
+	if rmErr := os.Remove(dest); rmErr != nil {
+		os.Remove(tmpPath)
+		return rmErr
+	}
+	if err = os.Rename(tmpPath, dest); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+	return nil
 }
 
 func newDiskID() (string, error) {

@@ -282,6 +282,26 @@ func TestAvatar(t *testing.T) {
 			t.Fatalf("mime %s content = %q", mime, got)
 		}
 	}
+
+	first := []byte("avatar-first")
+	second := []byte("avatar-second")
+	if _, err = SaveAvatar(dir, user.ID, "image/png", bytes.NewReader(first)); err != nil {
+		t.Fatal(err)
+	}
+	lastRel, err = SaveAvatar(dir, user.ID, "image/png", bytes.NewReader(second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lastRel != "avatars/"+user.ID {
+		t.Fatalf("path = %q", lastRel)
+	}
+	replaced, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(lastRel)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(replaced, second) {
+		t.Fatalf("replaced avatar = %q", replaced)
+	}
 	if under(t, dir, "tmp") != 0 {
 		t.Fatal("temp file remained after avatar upload")
 	}
