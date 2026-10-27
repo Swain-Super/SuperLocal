@@ -416,25 +416,39 @@ func (db *DB) AddMembers(actorID, convID string, memberIDs []string, now time.Ti
 }
 
 func (db *DB) Leave(userID, convID string) error {
-	var affected int64
-	err := db.withLockRetry(func() error {
-		res, execErr := db.sql.Exec(
+	return db.withLockRetry(func() error {
+		tx, txErr := db.sql.Begin()
+		if txErr != nil {
+			return txErr
+		}
+		defer tx.Rollback()
+		var group int
+		txErr = tx.QueryRow(
+			`SELECT 1 FROM conversations WHERE id = ? AND type = 'group' AND dissolved = 0`,
+			convID,
+		).Scan(&group)
+		if txErr != nil {
+			if txErr == sql.ErrNoRows {
+				return fmt.Errorf("会话不存在")
+			}
+			return txErr
+		}
+		res, txErr := tx.Exec(
 			`DELETE FROM members WHERE conversation_id = ? AND user_id = ?`,
 			convID, userID,
 		)
-		if execErr != nil {
-			return execErr
+		if txErr != nil {
+			return txErr
 		}
-		affected, execErr = res.RowsAffected()
-		return execErr
+		n, txErr := res.RowsAffected()
+		if txErr != nil {
+			return txErr
+		}
+		if n == 0 {
+			return fmt.Errorf("不是会话成员")
+		}
+		return tx.Commit()
 	})
-	if err != nil {
-		return err
-	}
-	if affected == 0 {
-		return fmt.Errorf("不是会话成员")
-	}
-	return nil
 }
 
 func (db *DB) Dissolve(convID string) error {

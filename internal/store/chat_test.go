@@ -746,6 +746,45 @@ func TestSearchUsers(t *testing.T) {
 	}
 }
 
+func TestLeaveDirect(t *testing.T) {
+	db := openTestDB(t)
+	now := time.Unix(1_700_000_300, 0)
+	jia, err := db.LoginOrCreate("user-key-leave-jia", "甲", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	yi, err := db.LoginOrCreate("user-key-leave-yi", "乙", now.Add(time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	convID, err := db.OpenDirect(jia.ID, yi.ID, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Leave(jia.ID, convID); err == nil {
+		t.Fatal("expected error when leaving a direct conversation")
+	}
+	var memberCount int
+	if err := db.SQL().QueryRow(`SELECT COUNT(*) FROM members WHERE conversation_id = ?`, convID).Scan(&memberCount); err != nil {
+		t.Fatal(err)
+	}
+	if memberCount != 2 {
+		t.Fatalf("members = %d", memberCount)
+	}
+	for _, userID := range []string{jia.ID, yi.ID} {
+		var n int
+		if err := db.SQL().QueryRow(
+			`SELECT COUNT(*) FROM members WHERE conversation_id = ? AND user_id = ?`,
+			convID, userID,
+		).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n != 1 {
+			t.Fatalf("user %s membership = %d", userID, n)
+		}
+	}
+}
+
 func unreadOf(list []ConversationView, id string) (int, bool) {
 	for _, view := range list {
 		if view.ID == id {
