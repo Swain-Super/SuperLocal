@@ -4,6 +4,7 @@ go 1.22
 
 require (
 	github.com/oklog/ulid/v2 v2.1.2
+	golang.org/x/crypto v0.33.0
 	modernc.org/sqlite v1.36.1
 )
 
