@@ -35,3 +35,6 @@ go.work.sum
 # Local worktrees and subagent scratch
 .worktrees
 .superpowers
+
+# Vite hashed assets. The placeholder index.html stays tracked.
+internal/web/dist/assets/
