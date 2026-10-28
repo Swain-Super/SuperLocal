@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 	"time"
 
@@ -68,16 +69,9 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 }
 
 func (s *server) clientIP(r *http.Request) string {
-	if ip := r.Header.Get("X-Forwarded-For"); ip != "" {
-		return ip
-	}
-	host := r.RemoteAddr
-	if i := len(host) - 1; i >= 0 {
-		for j := i; j >= 0; j-- {
-			if host[j] == ':' {
-				return host[:j]
-			}
-		}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
 	}
 	return host
 }

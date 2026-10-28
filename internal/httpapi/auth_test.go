@@ -141,6 +141,42 @@ func TestSession(t *testing.T) {
 		t.Fatalf("21st success-counted login status=%d body=%s", rLast.StatusCode, bLast)
 	}
 
+	// X-Forwarded-For 不得绕过限流：同一 RemoteAddr 计满 20 次后，伪造不同 XFF 仍 429。
+	xffLimiter := auth.NewLimiter()
+	xffSrv := httptest.NewServer(httpapi.New(httpapi.Deps{
+		DB:      db,
+		DataDir: dir,
+		Limiter: xffLimiter,
+		Now:     func() time.Time { return now },
+	}))
+	t.Cleanup(xffSrv.Close)
+	for i := 0; i < 20; i++ {
+		r, err := http.Post(xffSrv.URL+"/api/session", "application/json", strings.NewReader(`{"key":"bad","nickname":"x"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(r.Body)
+		r.Body.Close()
+		if r.StatusCode == 429 {
+			t.Fatalf("xff attempt %d got 429 early: %s", i+1, b)
+		}
+	}
+	xffReq, err := http.NewRequest(http.MethodPost, xffSrv.URL+"/api/session", strings.NewReader(`{"key":"bad","nickname":"x"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	xffReq.Header.Set("Content-Type", "application/json")
+	xffReq.Header.Set("X-Forwarded-For", "203.0.113.99")
+	xffRes, err := http.DefaultClient.Do(xffReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	xffBody, _ := io.ReadAll(xffRes.Body)
+	xffRes.Body.Close()
+	if xffRes.StatusCode != 429 {
+		t.Fatalf("21st login with forged X-Forwarded-For status=%d body=%s", xffRes.StatusCode, xffBody)
+	}
+
 	if err := db.UpdateUserAdmin(userID, true, true, true, true); err != nil {
 		t.Fatal(err)
 	}
