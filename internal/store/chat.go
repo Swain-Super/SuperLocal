@@ -16,12 +16,16 @@ type Message struct {
 	Kind           string    `json:"kind"`
 	Body           string    `json:"body"`
 	FileID         string    `json:"fileId"`
+	FileName       string    `json:"fileName"`
+	FileSize       int64     `json:"fileSize"`
+	Mime           string    `json:"mime"`
 	CreatedAt      time.Time `json:"createdAt"`
 }
 
 type ConversationView struct {
 	ID          string      `json:"id"`
 	Type        string      `json:"type"`
+	OwnerID     string      `json:"ownerId"`
 	Title       string      `json:"title"`
 	Peer        *PublicUser `json:"peer,omitempty"`
 	MemberCount int         `json:"memberCount"`
@@ -151,6 +155,8 @@ func (db *DB) PostMessage(senderID, convID, kind, body, fileID string, now time.
 	}
 
 	id := NewID(now)
+	var fileName, mime string
+	var fileSize int64
 	err = db.withLockRetry(func() error {
 		tx, txErr := db.sql.Begin()
 		if txErr != nil {
@@ -169,6 +175,12 @@ func (db *DB) PostMessage(senderID, convID, kind, body, fileID string, now time.
 			if txErr = bindOutgoing(tx, senderID, kind, fileID, id); txErr != nil {
 				return txErr
 			}
+			txErr = tx.QueryRow(
+				`SELECT name, mime, size FROM files WHERE id = ?`, fileID,
+			).Scan(&fileName, &mime, &fileSize)
+			if txErr != nil {
+				return txErr
+			}
 		}
 		return tx.Commit()
 	})
@@ -183,15 +195,27 @@ func (db *DB) PostMessage(senderID, convID, kind, body, fileID string, now time.
 		Kind:           kind,
 		Body:           body,
 		FileID:         fileID,
+		FileName:       fileName,
+		FileSize:       fileSize,
+		Mime:           mime,
 		CreatedAt:      unixMilliTime(now.UnixMilli()),
 	}, nil
 }
 
 func (db *DB) ListConversations(userID string, online map[string]bool) ([]ConversationView, error) {
 	rows, err := db.sql.Query(`
-		SELECT c.id, c.type, c.name,
+		SELECT c.id, c.type, c.owner_id, c.name,
 			(SELECT COUNT(*) FROM members m WHERE m.conversation_id = c.id),
-			COALESCE((SELECT body FROM messages WHERE conversation_id = c.id ORDER BY id DESC LIMIT 1), ''),
+			COALESCE((
+				SELECT COALESCE(
+					(SELECT name FROM files WHERE id = messages.file_id AND messages.file_id != ''),
+					messages.body
+				)
+				FROM messages
+				WHERE conversation_id = c.id
+				ORDER BY id DESC
+				LIMIT 1
+			), ''),
 			COALESCE((SELECT created_at FROM messages WHERE conversation_id = c.id ORDER BY id DESC LIMIT 1), 0),
 			(SELECT COUNT(*) FROM messages msg
 				WHERE msg.conversation_id = c.id
@@ -219,7 +243,7 @@ func (db *DB) ListConversations(userID string, online map[string]bool) ([]Conver
 		var item pendingView
 		var lastAt int64
 		if err := rows.Scan(
-			&item.view.ID, &item.view.Type, &item.name,
+			&item.view.ID, &item.view.Type, &item.view.OwnerID, &item.name,
 			&item.view.MemberCount, &item.view.LastBody, &lastAt, &item.view.Unread,
 		); err != nil {
 			return nil, err
@@ -533,9 +557,11 @@ func (db *DB) Messages(userID, convID, afterID string) ([]Message, error) {
 		return nil, fmt.Errorf("不是会话成员")
 	}
 	rows, err := db.sql.Query(`
-		SELECT m.id, m.conversation_id, m.sender_id, COALESCE(u.nickname, ''), m.kind, m.body, m.file_id, m.created_at
+		SELECT m.id, m.conversation_id, m.sender_id, COALESCE(u.nickname, ''), m.kind, m.body, m.file_id, m.created_at,
+			COALESCE(f.name, ''), COALESCE(f.mime, ''), COALESCE(f.size, 0)
 		FROM messages m
 		LEFT JOIN users u ON u.id = m.sender_id
+		LEFT JOIN files f ON f.id = m.file_id AND m.file_id != ''
 		WHERE m.conversation_id = ? AND m.id > ?
 		ORDER BY m.id ASC`, convID, afterID)
 	if err != nil {
@@ -550,6 +576,7 @@ func (db *DB) Messages(userID, convID, afterID string) ([]Message, error) {
 		if err := rows.Scan(
 			&msg.ID, &msg.ConversationID, &msg.SenderID, &msg.SenderNickname,
 			&msg.Kind, &msg.Body, &msg.FileID, &created,
+			&msg.FileName, &msg.Mime, &msg.FileSize,
 		); err != nil {
 			return nil, err
 		}

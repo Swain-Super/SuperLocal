@@ -57,6 +57,7 @@ export type PublicUser = {
 export type Conversation = {
   id: string
   type: string
+  ownerId: string
   title: string
   peer?: PublicUser
   memberCount: number
@@ -73,6 +74,9 @@ export type ChatMessage = {
   kind: string
   body: string
   fileId: string
+  fileName: string
+  fileSize: number
+  mime: string
   createdAt: string
 }
 

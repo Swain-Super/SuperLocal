@@ -9,7 +9,6 @@ import {
   type PublicUser,
 } from '../api'
 import {
-  fileMeta,
   formatBytes,
   formatStamp,
   listPreview,
@@ -87,18 +86,6 @@ function selfAvatarSrc(): string {
   }
   const joiner = url.includes('?') ? '&' : '?'
   return `${url}${joiner}v=${store.avatarNonce}`
-}
-
-function fileName(body: string): string {
-  return fileMeta(body)?.name ?? (body || '文件')
-}
-
-function fileSize(body: string): string {
-  const size = fileMeta(body)?.size
-  if (size == null) {
-    return ''
-  }
-  return formatBytes(size)
 }
 
 function takeFiles(event: DragEvent): File[] {
@@ -698,7 +685,7 @@ onUnmounted(() => {
               <template v-else>{{ store.active.peer?.online ? '在线' : '离线' }}</template>
             </span>
             <button
-              v-if="store.canAddMembers(store.active.id)"
+              v-if="store.active.type === 'group' && store.active.ownerId === store.me?.id"
               type="button"
               class="h-8 shrink-0 rounded-panel border border-border bg-panel px-2 text-aux text-text"
               @click="openPicker('add')"
@@ -753,7 +740,7 @@ onUnmounted(() => {
                 v-else-if="msg.kind === 'file' && msg.fileId"
                 class="flex w-[320px] max-w-full items-center gap-2 border border-border rounded-panel bg-panel px-2 py-1.5 no-underline"
                 :href="`/api/files/${msg.fileId}`"
-                :download="fileName(msg.body)"
+                :download="msg.fileName || '文件'"
               >
                 <svg viewBox="0 0 16 16" class="h-4 w-4 shrink-0 text-secondary" aria-hidden="true">
                   <path
@@ -762,8 +749,8 @@ onUnmounted(() => {
                   />
                 </svg>
                 <span class="min-w-0 flex-1">
-                  <span class="block truncate text-body text-text">{{ fileName(msg.body) }}</span>
-                  <span v-if="fileSize(msg.body)" class="block text-aux text-secondary">{{ fileSize(msg.body) }}</span>
+                  <span class="block truncate text-body text-text">{{ msg.fileName || '文件' }}</span>
+                  <span v-if="msg.fileSize != null" class="block text-aux text-secondary">{{ formatBytes(msg.fileSize) }}</span>
                 </span>
                 <span class="shrink-0 text-aux text-primary">下载</span>
               </a>

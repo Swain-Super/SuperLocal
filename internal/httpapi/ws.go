@@ -96,17 +96,8 @@ func (s *server) handleWSMessageSend(conn *websocket.Conn, user store.User, in w
 		return
 	}
 	payload, err := json.Marshal(map[string]any{
-		"type": "message.new",
-		"message": map[string]any{
-			"id":             msg.ID,
-			"conversationId": msg.ConversationID,
-			"senderId":       msg.SenderID,
-			"senderNickname": msg.SenderNickname,
-			"kind":           msg.Kind,
-			"body":           msg.Body,
-			"fileId":         msg.FileID,
-			"createdAt":      msg.CreatedAt,
-		},
+		"type":    "message.new",
+		"message": msg,
 	})
 	if err != nil {
 		s.writeWSError(conn, "推送失败")

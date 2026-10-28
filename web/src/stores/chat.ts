@@ -24,33 +24,8 @@ import {
 
 const retryCapMs = 15000
 
-// 文件消息的 body 只带文件名和大小，方便对方画出文件横条。文字消息不会走这个格式。
-export function fileBody(name: string, size: number): string {
-  return JSON.stringify({ name, size })
-}
-
-export function fileMeta(body: string): { name: string; size: number | null } | null {
-  if (!body.startsWith('{')) {
-    return null
-  }
-  try {
-    const parsed: unknown = JSON.parse(body)
-    if (!parsed || typeof parsed !== 'object') {
-      return null
-    }
-    const record = parsed as { name?: unknown; size?: unknown }
-    if (typeof record.name !== 'string' || record.name === '') {
-      return null
-    }
-    const size = typeof record.size === 'number' && Number.isFinite(record.size) ? record.size : null
-    return { name: record.name, size }
-  } catch {
-    return null
-  }
-}
-
 export function listPreview(body: string): string {
-  return fileMeta(body)?.name ?? body
+  return body
 }
 
 export function formatBytes(size: number): string {
@@ -102,10 +77,6 @@ function wsURL(): string {
   return `${protocol}//${location.host}/api/ws`
 }
 
-function ownedKey(userId: string): string {
-  return `sl-owned-groups:${userId}`
-}
-
 type ClientEvent = {
   type: 'message.send'
   conversationId: string
@@ -126,8 +97,6 @@ export const useChatStore = defineStore('chat', () => {
   const notice = ref('')
   const ready = ref(false)
   const avatarNonce = ref(0)
-  // 会话 JSON 没有群主字段。本机记下自己创建的群，用来显示「添加成员」。
-  const owned = ref<Set<string>>(new Set())
 
   const active = computed(() => findConv(activeId.value))
   const activeMessages = computed(() => messages.value[activeId.value] ?? [])
@@ -145,35 +114,6 @@ export const useChatStore = defineStore('chat', () => {
     }
     return conversations.value.find((item) => item.id === id)
       ?? (pending.value?.id === id ? pending.value : null)
-  }
-
-  function loadOwned() {
-    const userId = me.value?.id
-    if (!userId) {
-      owned.value = new Set()
-      return
-    }
-    try {
-      const raw = localStorage.getItem(ownedKey(userId))
-      const ids = raw ? JSON.parse(raw) as unknown : []
-      owned.value = new Set(Array.isArray(ids) ? ids.filter((id) => typeof id === 'string') : [])
-    } catch {
-      owned.value = new Set()
-    }
-  }
-
-  function rememberOwned(id: string) {
-    const next = new Set(owned.value)
-    next.add(id)
-    owned.value = next
-    if (me.value) {
-      localStorage.setItem(ownedKey(me.value.id), JSON.stringify([...next]))
-    }
-  }
-
-  function canAddMembers(id: string): boolean {
-    const conv = conversations.value.find((item) => item.id === id)
-    return conv?.type === 'group' && owned.value.has(id)
   }
 
   function mergeMessages(id: string, incoming: ChatMessage[]) {
@@ -253,6 +193,7 @@ export const useChatStore = defineStore('chat', () => {
     const conv: Conversation = {
       id,
       type: 'direct',
+      ownerId: '',
       title: user.nickname,
       peer: { ...user, online: true },
       memberCount: 2,
@@ -315,7 +256,6 @@ export const useChatStore = defineStore('chat', () => {
           conversationId,
           kind,
           fileId: uploaded.id,
-          text: fileBody(uploaded.name, uploaded.size),
         })
         if (!ok) {
           return
@@ -329,7 +269,6 @@ export const useChatStore = defineStore('chat', () => {
 
   async function createGroup(name: string, memberIds: string[]) {
     const id = await apiCreateGroup(name, memberIds)
-    rememberOwned(id)
     await loadConversations()
     const conv = conversations.value.find((item) => item.id === id)
     if (conv) {
@@ -408,7 +347,7 @@ export const useChatStore = defineStore('chat', () => {
         }
       }).catch(() => {})
     } else {
-      listed.lastBody = message.body
+      listed.lastBody = message.fileName || message.body
       listed.lastAt = message.createdAt
       if (activeId.value === id) {
         listed.unread = 0
@@ -561,7 +500,6 @@ export const useChatStore = defineStore('chat', () => {
     if (stopped) {
       return
     }
-    loadOwned()
     try {
       await Promise.all([loadConversations(), loadOnline()])
     } catch (err) {
@@ -615,7 +553,6 @@ export const useChatStore = defineStore('chat', () => {
     saveNickname,
     saveAvatar,
     logout,
-    canAddMembers,
   }
 })
 

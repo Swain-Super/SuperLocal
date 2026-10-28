@@ -141,7 +141,7 @@ func TestChatHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fileMsg, err := db.PostMessage(jiaMe["id"].(string), convID, "file", "hello.txt", fileID, now.Add(2*time.Millisecond))
+	fileMsg, err := db.PostMessage(jiaMe["id"].(string), convID, "file", "", fileID, now.Add(2*time.Millisecond))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,6 +175,22 @@ func TestChatHTTP(t *testing.T) {
 	if !hasNick {
 		t.Fatalf("missing senderNickname: %s", msgBody)
 	}
+	var fileView map[string]any
+	for _, m := range messages {
+		if m["id"] == fileMsg.ID {
+			fileView = m
+		}
+	}
+	if fileView == nil || fileView["fileName"] != "hello.txt" || fileView["fileSize"] != float64(len("hello")) {
+		t.Fatalf("file message JSON fileName/fileSize = %#v, want hello.txt/%d", fileView, len("hello"))
+	}
+	fileRaw, err := json.Marshal(fileView)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(fileRaw), "chat-key-jia") || strings.Contains(string(fileRaw), "chat-key-yi") || strings.Contains(string(fileRaw), `"key"`) {
+		t.Fatalf("file message JSON must not contain another user's key: %s", fileRaw)
+	}
 
 	// 建群；非成员下载 403；成员可下载字节。
 	groupPayload, _ := json.Marshal(map[string]any{
@@ -197,6 +213,26 @@ func TestChatHTTP(t *testing.T) {
 	groupID, _ := group["id"].(string)
 	if groupID == "" {
 		t.Fatalf("group id empty: %s", groupBody)
+	}
+	groupViews := listConversations(t, yi.client, srv.URL)
+	var groupView map[string]any
+	for _, c := range groupViews {
+		if c["id"] == groupID {
+			groupView = c
+		}
+	}
+	if groupView == nil || groupView["type"] != "group" || groupView["ownerId"] != jiaMe["id"] {
+		t.Fatalf("group conversation JSON = %#v, want ownerId %v", groupView, jiaMe["id"])
+	}
+	groupRaw, err := json.Marshal(groupView)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(groupRaw), `"ownerId"`) {
+		t.Fatalf("group conversation JSON missing ownerId: %s", groupRaw)
+	}
+	if strings.Contains(string(groupRaw), "chat-key-jia") || strings.Contains(string(groupRaw), "chat-key-yi") || strings.Contains(string(groupRaw), `"key"`) {
+		t.Fatalf("group conversation JSON must not contain key: %s", groupRaw)
 	}
 
 	groupFileID, groupFileBytes := uploadFile(t, jia.client, srv.URL, "group.txt", "text/plain", []byte("group-data"))

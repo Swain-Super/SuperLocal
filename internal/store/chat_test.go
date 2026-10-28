@@ -91,7 +91,7 @@ func TestDirect(t *testing.T) {
 		t.Fatalf("jia list: %+v", listJia)
 	}
 	view := listJia[0]
-	if view.ID != first || view.Type != "direct" || view.Title != "乙" || view.MemberCount != 2 || view.Unread != 0 || view.LastBody != "你好" || view.LastAt.UnixMilli() != now.UnixMilli() {
+	if view.ID != first || view.Type != "direct" || view.OwnerID != "" || view.Title != "乙" || view.MemberCount != 2 || view.Unread != 0 || view.LastBody != "你好" || view.LastAt.UnixMilli() != now.UnixMilli() {
 		t.Fatalf("%+v", view)
 	}
 	if view.Peer == nil || view.Peer.ID != yi.ID || view.Peer.Nickname != "乙" || !view.Peer.Online {
@@ -359,8 +359,18 @@ func TestGroup(t *testing.T) {
 		t.Fatalf("jia list before messages: %+v", listJia)
 	}
 	view := listJia[0]
-	if view.ID != id || view.Type != "group" || view.Title != name || view.MemberCount != 2 || view.Unread != 0 || view.LastBody != "" || !view.LastAt.IsZero() || view.Peer != nil {
+	if view.ID != id || view.Type != "group" || view.OwnerID != jia.ID || view.Title != name || view.MemberCount != 2 || view.Unread != 0 || view.LastBody != "" || !view.LastAt.IsZero() || view.Peer != nil {
 		t.Fatalf("%+v", view)
+	}
+	groupRaw, err := json.Marshal(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(groupRaw), `"ownerId":"`+jia.ID+`"`) {
+		t.Fatalf("group conversation JSON missing ownerId: %s", groupRaw)
+	}
+	if strings.Contains(string(groupRaw), "user-key-group-") || strings.Contains(string(groupRaw), `"key"`) {
+		t.Fatalf("group conversation JSON leaked key: %s", groupRaw)
 	}
 	listYi, err := db.ListConversations(yi.ID, nil)
 	if err != nil {
