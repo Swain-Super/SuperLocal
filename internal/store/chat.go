@@ -46,6 +46,16 @@ func (db *DB) OpenDirect(selfID, peerID string, now time.Time) (string, error) {
 	if selfID == "" || peerID == "" || selfID == peerID {
 		return "", fmt.Errorf("一对一需要两个不同的用户")
 	}
+	peer, err := db.UserByID(peerID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", fmt.Errorf("用户不存在")
+		}
+		return "", err
+	}
+	if peer.Banned {
+		return "", fmt.Errorf("用户已被封禁")
+	}
 	key := directKey(selfID, peerID)
 	existing, err := db.conversationIDByDirectKey(key)
 	if err == nil {
@@ -136,6 +146,12 @@ func (db *DB) PostMessage(senderID, convID, kind, body, fileID string, now time.
 		}
 		if utf8.RuneCountInString(body) > 4000 {
 			return Message{}, fmt.Errorf("文字最长 4000 字")
+		}
+		// 文字消息不得挂文件，避免露出他人文件名或误绑。
+		fileID = ""
+	} else if kind == "image" || kind == "file" {
+		if fileID == "" {
+			return Message{}, fmt.Errorf("缺少文件")
 		}
 	}
 	if convType == "direct" {
@@ -264,6 +280,9 @@ func (db *DB) ListConversations(userID string, online map[string]bool) ([]Conver
 		if view.Type == "direct" {
 			peer, err := db.peerUser(view.ID, userID)
 			if err != nil {
+				if err == sql.ErrNoRows {
+					continue
+				}
 				return nil, err
 			}
 			pub := Public(peer)

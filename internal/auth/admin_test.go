@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"golang.org/x/crypto/bcrypt"
 	"superlocal/internal/store"
 )
 
@@ -64,6 +65,54 @@ func TestEnsureAdmin(t *testing.T) {
 	}
 	if err := CheckAdmin(db, username, password); err == nil {
 		t.Fatal("expected old password to fail")
+	}
+}
+
+func TestEnsureAdminResyncsHash(t *testing.T) {
+	dir := t.TempDir()
+	db := openAuthDB(t)
+	username, password, err := EnsureAdmin(db, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 哈希被换掉后，打印密码应无法登录，直到 EnsureAdmin 把文件密码写回库。
+	otherHash, err := bcrypt.GenerateFromPassword([]byte("other-password-xx"), bcrypt.DefaultCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.SQL().Exec(
+		`UPDATE admin_user SET password_hash = ? WHERE username = ?`,
+		string(otherHash), username,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckAdmin(db, username, password); err == nil {
+		t.Fatal("expected CheckAdmin to fail after hash was replaced")
+	}
+
+	gotUser, gotPass, err := EnsureAdmin(db, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotUser != username || gotPass != password {
+		t.Fatalf("got %q/%q, want printed secret %q/%q", gotUser, gotPass, username, password)
+	}
+	if err := CheckAdmin(db, username, password); err != nil {
+		t.Fatal(err)
+	}
+
+	// 库重建、secret 文件保留：空库也应接受同一打印密码。
+	db2 := openAuthDB(t)
+	gotUser, gotPass, err = EnsureAdmin(db2, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotUser != username || gotPass != password {
+		t.Fatalf("recreated db got %q/%q, want %q/%q", gotUser, gotPass, username, password)
+	}
+	if err := CheckAdmin(db2, username, password); err != nil {
+		t.Fatal(err)
 	}
 }
 

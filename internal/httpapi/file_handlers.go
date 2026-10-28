@@ -25,6 +25,7 @@ func (s *server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	if max <= 0 {
 		max = 200 * 1024 * 1024
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, max)
 	// 32MiB 只限制解析时的内存；允许的文件大小仍由 SaveUpload 按 max 拒绝。
 	if err := r.ParseMultipartForm(32 * 1024 * 1024); err != nil {
 		writeError(w, http.StatusBadRequest, "请求无效")
@@ -89,6 +90,8 @@ func (s *server) handleUploadAvatar(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	const avatarMax = 2 * 1024 * 1024
+	r.Body = http.MaxBytesReader(w, r.Body, avatarMax)
 	if err := r.ParseMultipartForm(3 * 1024 * 1024); err != nil {
 		writeError(w, http.StatusBadRequest, "请求无效")
 		return

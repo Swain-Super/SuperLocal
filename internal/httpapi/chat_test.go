@@ -571,6 +571,53 @@ func TestDownloadFilename(t *testing.T) {
 	}
 }
 
+func TestUploadRejectsOversizedBody(t *testing.T) {
+	now := time.Unix(1_700_000_500, 0)
+	db := openHTTPDB(t)
+	dir := t.TempDir()
+	const maxUpload = 256
+	srv := httptest.NewServer(httpapi.New(httpapi.Deps{
+		DB:        db,
+		Hub:       nil,
+		DataDir:   dir,
+		MaxUpload: maxUpload,
+		Limiter:   auth.NewLimiter(),
+		Now:       func() time.Time { return now },
+	}))
+	t.Cleanup(srv.Close)
+
+	jia := loginClient(t, srv.URL, "upload-oversize-jia", "甲")
+	body := &bytes.Buffer{}
+	w := multipart.NewWriter(body)
+	part, err := w.CreateFormFile("file", "big.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write(bytes.Repeat([]byte("a"), maxUpload+1024)); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/api/files", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	res, err := jia.client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resBody, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode == 200 {
+		t.Fatalf("expected oversized upload to fail, body=%s", resBody)
+	}
+	if res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", res.StatusCode, resBody)
+	}
+}
+
 func postAvatar(t *testing.T, c *http.Client, base, filename, mime string, data []byte) {
 	t.Helper()
 	body := &bytes.Buffer{}

@@ -15,11 +15,27 @@ import (
 const adminUsername = "admin"
 
 // EnsureAdmin 在空库上创建管理员；凭证文件丢失时生成新密码并覆盖哈希。
-// 文件仍在时返回其中的用户名和密码，供启动时打印。
+// 文件仍在时校验库内哈希，不一致或缺行则把文件密码写入哈希（文件密码无法哈希则换新），
+// 保证打印出的密码始终能登录。
 func EnsureAdmin(db *store.DB, dataDir string) (string, string, error) {
 	path := secretPath(dataDir)
 	username, password, err := readAdminSecret(path)
 	if err == nil {
+		if CheckAdmin(db, username, password) == nil {
+			return username, password, nil
+		}
+		if err := saveAdminPassword(db, username, password); err != nil {
+			password, err = randomAdminPassword()
+			if err != nil {
+				return "", "", err
+			}
+			if err := saveAdminPassword(db, username, password); err != nil {
+				return "", "", err
+			}
+			if err := writeAdminSecret(path, username, password); err != nil {
+				return "", "", err
+			}
+		}
 		return username, password, nil
 	}
 	if !os.IsNotExist(err) {

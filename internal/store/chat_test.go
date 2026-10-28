@@ -756,6 +756,158 @@ func TestSearchUsers(t *testing.T) {
 	}
 }
 
+func TestOpenDirectRejectsUnknownOrBanned(t *testing.T) {
+	db := openTestDB(t)
+	now := time.Unix(1_700_000_400, 0)
+	jia, err := db.LoginOrCreate("user-key-open-jia", "甲", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	yi, err := db.LoginOrCreate("user-key-open-yi", "乙", now.Add(time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := db.OpenDirect(jia.ID, "missing-peer", now); err == nil {
+		t.Fatal("expected error for unknown peer")
+	}
+	var convCount int
+	if err := db.SQL().QueryRow(`SELECT COUNT(*) FROM conversations`).Scan(&convCount); err != nil {
+		t.Fatal(err)
+	}
+	if convCount != 0 {
+		t.Fatalf("conversations = %d after unknown peer", convCount)
+	}
+
+	if err := db.UpdateUserAdmin(yi.ID, true, true, true, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.OpenDirect(jia.ID, yi.ID, now); err == nil {
+		t.Fatal("expected error for banned peer")
+	}
+	if err := db.SQL().QueryRow(`SELECT COUNT(*) FROM conversations`).Scan(&convCount); err != nil {
+		t.Fatal(err)
+	}
+	if convCount != 0 {
+		t.Fatalf("conversations = %d after banned peer", convCount)
+	}
+}
+
+func TestListConversationsSkipsMissingPeer(t *testing.T) {
+	db := openTestDB(t)
+	now := time.Unix(1_700_000_410, 0)
+	jia, err := db.LoginOrCreate("user-key-skip-jia", "甲", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	yi, err := db.LoginOrCreate("user-key-skip-yi", "乙", now.Add(time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bing, err := db.LoginOrCreate("user-key-skip-bing", "丙", now.Add(2*time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	directID, err := db.OpenDirect(jia.ID, yi.ID, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.PostMessage(jia.ID, directID, "text", "你好", "", now); err != nil {
+		t.Fatal(err)
+	}
+	groupID, err := db.CreateGroup(jia.ID, "保留群", []string{bing.ID}, now.Add(time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := db.SQL().Exec(`DELETE FROM users WHERE id = ?`, yi.ID); err != nil {
+		t.Fatal(err)
+	}
+	list, err := db.ListConversations(jia.ID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].ID != groupID || list[0].Type != "group" {
+		t.Fatalf("list = %+v, want only group %s", list, groupID)
+	}
+	for _, view := range list {
+		if view.ID == directID {
+			t.Fatalf("missing-peer direct still listed: %+v", view)
+		}
+	}
+}
+
+func TestPostMessageTextClearsFileID(t *testing.T) {
+	db := openTestDB(t)
+	now := time.Unix(1_700_000_420, 0)
+	jia, err := db.LoginOrCreate("user-key-textfile-jia", "甲", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	yi, err := db.LoginOrCreate("user-key-textfile-yi", "乙", now.Add(time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	convID, err := db.OpenDirect(jia.ID, yi.ID, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fileID, err := db.InsertFile(jia.ID, "secret-name.txt", "text/plain", "files/secret-name", 4, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	msg, err := db.PostMessage(jia.ID, convID, "text", "只是文字", fileID, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg.FileID != "" || msg.FileName != "" || msg.FileSize != 0 || msg.Mime != "" {
+		t.Fatalf("text message leaked file fields: %+v", msg)
+	}
+	var storedFileID string
+	if err := db.SQL().QueryRow(`SELECT file_id FROM messages WHERE id = ?`, msg.ID).Scan(&storedFileID); err != nil {
+		t.Fatal(err)
+	}
+	if storedFileID != "" {
+		t.Fatalf("stored file_id = %q", storedFileID)
+	}
+	var bound string
+	if err := db.SQL().QueryRow(`SELECT message_id FROM files WHERE id = ?`, fileID).Scan(&bound); err != nil {
+		t.Fatal(err)
+	}
+	if bound != "" {
+		t.Fatalf("text message bound file to %q", bound)
+	}
+	listed, err := db.Messages(jia.ID, convID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 || listed[0].FileName != "" || listed[0].FileID != "" || listed[0].Body != "只是文字" {
+		t.Fatalf("%+v", listed)
+	}
+	views, err := db.ListConversations(jia.ID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(views) != 1 || views[0].LastBody != "只是文字" {
+		t.Fatalf("lastBody leaked file name: %+v", views)
+	}
+
+	if _, err := db.PostMessage(jia.ID, convID, "image", "", "", now.Add(time.Millisecond)); err == nil {
+		t.Fatal("expected error for image without file id")
+	}
+	if _, err := db.PostMessage(jia.ID, convID, "file", "x", "", now.Add(2*time.Millisecond)); err == nil {
+		t.Fatal("expected error for file without file id")
+	}
+	okFile, err := db.PostMessage(jia.ID, convID, "file", "", fileID, now.Add(3*time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if okFile.FileID != fileID || okFile.FileName != "secret-name.txt" {
+		t.Fatalf("%+v", okFile)
+	}
+}
+
 func TestLeaveDirect(t *testing.T) {
 	db := openTestDB(t)
 	now := time.Unix(1_700_000_300, 0)
