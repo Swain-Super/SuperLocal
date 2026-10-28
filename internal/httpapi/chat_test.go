@@ -9,6 +9,9 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/textproto"
+	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -446,6 +449,89 @@ func TestPatchMe(t *testing.T) {
 	}
 	if again := getMe(t, jia.client, srv.URL); again["nickname"] != "新昵称" {
 		t.Fatalf("nickname changed after invalid patch: %v", again["nickname"])
+	}
+}
+
+func TestDownloadFilename(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	db := openHTTPDB(t)
+	dir := t.TempDir()
+	handler := httpapi.New(httpapi.Deps{
+		DB:        db,
+		DataDir:   dir,
+		MaxUpload: 1024 * 1024,
+		Limiter:   auth.NewLimiter(),
+		Now:       func() time.Time { return now },
+	})
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+
+	jia := loginClient(t, srv.URL, "dl-key-jia", "甲")
+	yi := loginClient(t, srv.URL, "dl-key-yi", "乙")
+	jiaMe := getMe(t, jia.client, srv.URL)
+	yiMe := getMe(t, yi.client, srv.URL)
+
+	directPayload, _ := json.Marshal(map[string]string{"userId": yiMe["id"].(string)})
+	directRes, err := jia.client.Post(srv.URL+"/api/conversations/direct", "application/json", bytes.NewReader(directPayload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	directBody, _ := io.ReadAll(directRes.Body)
+	directRes.Body.Close()
+	if directRes.StatusCode != 200 {
+		t.Fatalf("direct status=%d body=%s", directRes.StatusCode, directBody)
+	}
+	var direct map[string]any
+	if err := json.Unmarshal(directBody, &direct); err != nil {
+		t.Fatal(err)
+	}
+	convID, _ := direct["id"].(string)
+	if convID == "" {
+		t.Fatalf("direct id empty: %s", directBody)
+	}
+
+	payload := []byte("safe-body")
+	rel := "files/dl-name"
+	if err := os.MkdirAll(filepath.Join(dir, "files"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(rel)), payload, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rawName := "notes/evil\"\r\nname.txt"
+	fileID, err := db.InsertFile(jiaMe["id"].(string), rawName, "text/plain", rel, int64(len(payload)), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.PostMessage(jiaMe["id"].(string), convID, "file", "x", fileID, now.Add(time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/files/"+fileID, nil)
+	base, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range yi.client.Jar.Cookies(base) {
+		req.AddCookie(c)
+	}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("download status=%d body=%s", rec.Code, rec.Body.Bytes())
+	}
+	if !bytes.Equal(rec.Body.Bytes(), payload) {
+		t.Fatalf("body = %q", rec.Body.Bytes())
+	}
+	cd := rec.Header().Get("Content-Disposition")
+	if strings.Contains(cd, "\n") || strings.Contains(cd, "\r") || (strings.Contains(cd, `"`) && strings.Count(cd, `"`) != 2) {
+		t.Fatalf("Content-Disposition leaked quote or newline: %q", cd)
+	}
+	if strings.Contains(cd, "evil\"") || strings.Contains(cd, "notes/") {
+		t.Fatalf("Content-Disposition leaked raw filename: %q", cd)
+	}
+	if cd != `inline; filename="evilname.txt"` {
+		t.Fatalf("Content-Disposition = %q", cd)
 	}
 }
 

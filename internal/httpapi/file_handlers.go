@@ -25,7 +25,8 @@ func (s *server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	if max <= 0 {
 		max = 200 * 1024 * 1024
 	}
-	if err := r.ParseMultipartForm(max + 1024); err != nil {
+	// 32MiB 只限制解析时的内存；允许的文件大小仍由 SaveUpload 按 max 拒绝。
+	if err := r.ParseMultipartForm(32 * 1024 * 1024); err != nil {
 		writeError(w, http.StatusBadRequest, "请求无效")
 		return
 	}
@@ -249,10 +250,20 @@ func serveDiskFile(w http.ResponseWriter, path, mime, filename string) {
 		w.Header().Set("Content-Type", mime)
 	}
 	if filename != "" {
-		w.Header().Set("Content-Disposition", `inline; filename="`+filename+`"`)
+		w.Header().Set("Content-Disposition", `inline; filename="`+downloadFilename(filename)+`"`)
 	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = io.Copy(w, f)
+}
+
+// downloadFilename 只保留基名，并去掉会打断 Content-Disposition 的引号和换行。
+func downloadFilename(name string) string {
+	name = filepath.Base(name)
+	name = strings.NewReplacer("\r", "", "\n", "", `"`, "").Replace(name)
+	if name == "" {
+		return "download"
+	}
+	return name
 }
 
 func sniffImageMIME(filename string) string {
