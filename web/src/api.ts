@@ -172,3 +172,101 @@ export async function adminLogin(username: string, password: string) {
   const response = await http.post('/api/admin/session', { username, password })
   return response.data
 }
+
+export type AdminStats = {
+  users: number
+  online: number
+  banned: number
+  messages: number
+  fileBytes: number
+}
+
+export type AdminUser = {
+  id: string
+  key: string
+  nickname: string
+  online: boolean
+  lastSeenAt: string
+  banned: boolean
+  canSendMessage: boolean
+  canSendFile: boolean
+  canCreateGroup: boolean
+}
+
+export type AdminUserPatch = {
+  banned: boolean
+  canSendMessage: boolean
+  canSendFile: boolean
+  canCreateGroup: boolean
+}
+
+export type AdminGroup = {
+  id: string
+  name: string
+  memberCount: number
+  createdAt: string
+}
+
+export function adminDenied(err: unknown): boolean {
+  return axios.isAxiosError(err) && err.response?.status === 401
+}
+
+export async function adminStats(): Promise<AdminStats> {
+  const response = await http.get<unknown>('/api/admin/stats')
+  const data = response.data
+  if (!isAdminStats(data)) {
+    throw new Error('请求失败')
+  }
+  return data
+}
+
+function isAdminStats(data: unknown): data is AdminStats {
+  if (!data || typeof data !== 'object') {
+    return false
+  }
+  const row = data as AdminStats
+  return typeof row.users === 'number'
+    && typeof row.online === 'number'
+    && typeof row.banned === 'number'
+    && typeof row.messages === 'number'
+    && typeof row.fileBytes === 'number'
+}
+
+export async function adminUsers(q: string): Promise<AdminUser[]> {
+  const query = q.trim()
+  const response = await http.get<unknown>('/api/admin/users', {
+    params: query ? { q: query } : {},
+  })
+  const data = response.data
+  if (!data || typeof data !== 'object' || !('users' in data)) {
+    throw new Error('请求失败')
+  }
+  return (data as { users?: AdminUser[] }).users ?? []
+}
+
+// 四个布尔都必须提交。省略的字段会被解码成 false。
+export async function patchAdminUser(id: string, body: AdminUserPatch) {
+  await http.patch(`/api/admin/users/${encodeURIComponent(id)}`, {
+    banned: body.banned,
+    canSendMessage: body.canSendMessage,
+    canSendFile: body.canSendFile,
+    canCreateGroup: body.canCreateGroup,
+  })
+}
+
+export async function adminGroups(): Promise<AdminGroup[]> {
+  const response = await http.get<unknown>('/api/admin/groups')
+  const data = response.data
+  if (!data || typeof data !== 'object' || !('groups' in data)) {
+    throw new Error('请求失败')
+  }
+  return (data as { groups?: AdminGroup[] }).groups ?? []
+}
+
+export async function deleteAdminGroup(id: string) {
+  await http.delete(`/api/admin/groups/${encodeURIComponent(id)}`)
+}
+
+export async function adminPassword(password: string) {
+  await http.post('/api/admin/password', { password })
+}

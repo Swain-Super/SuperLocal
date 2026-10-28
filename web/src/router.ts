@@ -1,15 +1,8 @@
-import { h } from 'vue'
 import { createRouter, createWebHistory } from 'vue-router'
 import { me } from './api'
 import AdminLogin from './views/admin/AdminLogin.vue'
 import Chat from './views/Chat.vue'
 import Login from './views/Login.vue'
-
-const placeholder = {
-  render() {
-    return h('main', { class: 'min-h-screen bg-page' })
-  },
-}
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -17,7 +10,15 @@ export const router = createRouter({
     { path: '/login', component: Login },
     { path: '/', component: Chat },
     { path: '/admin/login', component: AdminLogin },
-    { path: '/admin', component: placeholder },
+    {
+      path: '/admin',
+      component: () => import('./views/admin/Layout.vue'),
+      children: [
+        { path: '', component: () => import('./views/admin/Overview.vue') },
+        { path: 'users', component: () => import('./views/admin/Users.vue') },
+        { path: 'groups', component: () => import('./views/admin/Groups.vue') },
+      ],
+    },
   ],
 })
 
