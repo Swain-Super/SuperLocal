@@ -46,6 +46,23 @@ func New(deps Deps) http.Handler {
 	mux.HandleFunc("POST /api/session", s.handleLogin)
 	mux.HandleFunc("POST /api/logout", s.handleLogout)
 	mux.HandleFunc("GET /api/me", s.handleMe)
+	mux.HandleFunc("POST /api/me/avatar", s.handleUploadAvatar)
+
+	mux.HandleFunc("GET /api/users/online", s.handleOnlineUsers)
+	mux.HandleFunc("GET /api/users", s.handleSearchUsers)
+
+	mux.HandleFunc("POST /api/conversations/direct", s.handleOpenDirect)
+	mux.HandleFunc("GET /api/conversations", s.handleListConversations)
+	mux.HandleFunc("GET /api/conversations/{id}/messages", s.handleMessages)
+	mux.HandleFunc("POST /api/conversations/{id}/read", s.handleMarkRead)
+
+	mux.HandleFunc("POST /api/groups", s.handleCreateGroup)
+	mux.HandleFunc("POST /api/groups/{id}/members", s.handleAddMembers)
+	mux.HandleFunc("POST /api/groups/{id}/leave", s.handleLeaveGroup)
+
+	mux.HandleFunc("POST /api/files", s.handleUpload)
+	mux.HandleFunc("GET /api/files/{id}", s.handleDownload)
+	mux.HandleFunc("GET /api/avatars/{id}", s.handleGetAvatar)
 
 	mux.HandleFunc("POST /api/admin/session", s.handleAdminLogin)
 	mux.HandleFunc("POST /api/admin/logout", s.handleAdminLogout)
