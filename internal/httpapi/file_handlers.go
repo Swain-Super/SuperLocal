@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -107,7 +108,12 @@ func (s *server) handleUploadAvatar(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := s.db.SetAvatar(user.ID, rel); err != nil {
+	stored, err := rememberAvatarType(s.dataDir, user.ID, rel, mime)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "保存失败")
+		return
+	}
+	if err := s.db.SetAvatar(user.ID, stored); err != nil {
 		writeError(w, http.StatusInternalServerError, "保存失败")
 		return
 	}
@@ -130,7 +136,106 @@ func (s *server) handleGetAvatar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path := filepath.Join(s.dataDir, filepath.FromSlash(u.AvatarPath))
-	serveDiskFile(w, path, "image/png", "avatar")
+	mime := avatarMIME(u.AvatarPath, path)
+	serveDiskFile(w, path, mime, "avatar")
+}
+
+// rememberAvatarType 给 SaveAvatar 的无扩展名路径补上类型后缀再落库。
+// 同一用户换类型时删掉其余后缀，避免旧文件留在 avatars/。
+func rememberAvatarType(dir, userID, rel, mime string) (string, error) {
+	ext := avatarExt(mime)
+	if ext == "" {
+		return "", fmt.Errorf("不支持的头像类型")
+	}
+	stored := rel + ext
+	if err := moveOver(dir, rel, stored); err != nil {
+		return "", err
+	}
+	for _, other := range []string{"", ".jpg", ".jpeg", ".png", ".webp", ".gif"} {
+		if other == ext {
+			continue
+		}
+		stale := filepath.Join(dir, "avatars", userID+other)
+		if err := os.Remove(stale); err != nil && !os.IsNotExist(err) {
+			return "", err
+		}
+	}
+	return stored, nil
+}
+
+func moveOver(dir, fromRel, toRel string) error {
+	if fromRel == toRel {
+		return nil
+	}
+	src := filepath.Join(dir, filepath.FromSlash(fromRel))
+	dst := filepath.Join(dir, filepath.FromSlash(toRel))
+	err := os.Rename(src, dst)
+	if err == nil {
+		return nil
+	}
+	if rmErr := os.Remove(dst); rmErr != nil && !os.IsNotExist(rmErr) {
+		return err
+	}
+	return os.Rename(src, dst)
+}
+
+func avatarMIME(storedPath, diskPath string) string {
+	if mime := imageMIMEFromName(storedPath); mime != "" {
+		return mime
+	}
+	if mime := sniffImageFile(diskPath); mime != "" {
+		return mime
+	}
+	return "application/octet-stream"
+}
+
+func avatarExt(mime string) string {
+	switch mime {
+	case "image/jpeg":
+		return ".jpg"
+	case "image/png":
+		return ".png"
+	case "image/webp":
+		return ".webp"
+	case "image/gif":
+		return ".gif"
+	default:
+		return ""
+	}
+}
+
+func imageMIMEFromName(name string) string {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".png":
+		return "image/png"
+	case ".webp":
+		return "image/webp"
+	case ".gif":
+		return "image/gif"
+	default:
+		return ""
+	}
+}
+
+func sniffImageFile(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	buf := make([]byte, 512)
+	n, _ := f.Read(buf)
+	if n == 0 {
+		return ""
+	}
+	switch ct := http.DetectContentType(buf[:n]); ct {
+	case "image/jpeg", "image/png", "image/webp", "image/gif":
+		return ct
+	default:
+		return ""
+	}
 }
 
 func serveDiskFile(w http.ResponseWriter, path, mime, filename string) {
@@ -151,16 +256,8 @@ func serveDiskFile(w http.ResponseWriter, path, mime, filename string) {
 }
 
 func sniffImageMIME(filename string) string {
-	switch strings.ToLower(filepath.Ext(filename)) {
-	case ".jpg", ".jpeg":
-		return "image/jpeg"
-	case ".png":
-		return "image/png"
-	case ".webp":
-		return "image/webp"
-	case ".gif":
-		return "image/gif"
-	default:
-		return "application/octet-stream"
+	if mime := imageMIMEFromName(filename); mime != "" {
+		return mime
 	}
+	return "application/octet-stream"
 }

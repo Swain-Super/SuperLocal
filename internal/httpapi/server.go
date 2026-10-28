@@ -46,6 +46,7 @@ func New(deps Deps) http.Handler {
 	mux.HandleFunc("POST /api/session", s.handleLogin)
 	mux.HandleFunc("POST /api/logout", s.handleLogout)
 	mux.HandleFunc("GET /api/me", s.handleMe)
+	mux.HandleFunc("PATCH /api/me", s.handlePatchMe)
 	mux.HandleFunc("POST /api/me/avatar", s.handleUploadAvatar)
 
 	mux.HandleFunc("GET /api/users/online", s.handleOnlineUsers)

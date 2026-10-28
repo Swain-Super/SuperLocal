@@ -153,6 +153,29 @@ func unixMilliTime(ms int64) time.Time {
 	return time.UnixMilli(ms)
 }
 
+// UpdateNickname 只改这一名用户的昵称。规则与注册相同。
+func (db *DB) UpdateNickname(userID, nickname string) (User, error) {
+	nick, err := normalizeNickname(nickname)
+	if err != nil {
+		return User{}, err
+	}
+	err = db.withLockRetry(func() error {
+		var n int
+		if err := db.sql.QueryRow(`SELECT COUNT(*) FROM users WHERE id = ?`, userID).Scan(&n); err != nil {
+			return err
+		}
+		if n == 0 {
+			return fmt.Errorf("用户不存在")
+		}
+		_, err := db.sql.Exec(`UPDATE users SET nickname = ? WHERE id = ?`, nick, userID)
+		return err
+	})
+	if err != nil {
+		return User{}, err
+	}
+	return db.UserByID(userID)
+}
+
 func normalizeNickname(raw string) (string, error) {
 	nick := strings.TrimSpace(raw)
 	if strings.Contains(nick, "\n") || strings.Contains(nick, "\r") {

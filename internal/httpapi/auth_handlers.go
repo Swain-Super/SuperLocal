@@ -66,6 +66,26 @@ func (s *server) handleMe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, store.MeView(user))
 }
 
+func (s *server) handlePatchMe(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Nickname string `json:"nickname"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "请求无效")
+		return
+	}
+	updated, err := s.db.UpdateNickname(user.ID, req.Nickname)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, store.MeView(updated))
+}
+
 func (s *server) requireUser(w http.ResponseWriter, r *http.Request) (store.User, bool) {
 	token := readCookie(r, cookieSession)
 	if token == "" {

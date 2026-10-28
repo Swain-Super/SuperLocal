@@ -352,6 +352,162 @@ func TestFileHTTP(t *testing.T) {
 	_ = jiaMe
 }
 
+func TestAvatarJPEG(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	db := openHTTPDB(t)
+	dir := t.TempDir()
+	srv := httptest.NewServer(httpapi.New(httpapi.Deps{
+		DB:        db,
+		DataDir:   dir,
+		MaxUpload: 1024 * 1024,
+		Limiter:   auth.NewLimiter(),
+		Now:       func() time.Time { return now },
+	}))
+	t.Cleanup(srv.Close)
+
+	jia := loginClient(t, srv.URL, "jpeg-key", "甲")
+	jpeg := []byte{0xff, 0xd8, 0xff, 0xd9}
+	postAvatar(t, jia.client, srv.URL, "photo.jpg", "image/jpeg", jpeg)
+
+	me := getMe(t, jia.client, srv.URL)
+	avatarURL, _ := me["avatarUrl"].(string)
+	if !strings.HasPrefix(avatarURL, "/api/avatars/") {
+		t.Fatalf("avatarUrl = %q", avatarURL)
+	}
+	res, err := jia.client.Get(srv.URL + avatarURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("avatar get status=%d body=%s", res.StatusCode, body)
+	}
+	if ct := res.Header.Get("Content-Type"); ct != "image/jpeg" {
+		t.Fatalf("Content-Type = %q, want image/jpeg", ct)
+	}
+	if !bytes.Equal(body, jpeg) {
+		t.Fatalf("avatar bytes mismatch")
+	}
+}
+
+func TestPatchMe(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	db := openHTTPDB(t)
+	srv := httptest.NewServer(httpapi.New(httpapi.Deps{
+		DB:      db,
+		Limiter: auth.NewLimiter(),
+		Now:     func() time.Time { return now },
+	}))
+	t.Cleanup(srv.Close)
+
+	jia := loginClient(t, srv.URL, "patch-key-jia", "甲")
+	yi := loginClient(t, srv.URL, "patch-key-yi", "乙")
+
+	me := patchMe(t, jia.client, srv.URL, `{"nickname":"  新昵称  "}`, 200)
+	if me["nickname"] != "新昵称" {
+		t.Fatalf("nickname = %v", me["nickname"])
+	}
+	if me["key"] != "patch-key-jia" {
+		t.Fatalf("key = %v", me["key"])
+	}
+	if me["id"] == "" || me["id"] == nil {
+		t.Fatalf("id = %v", me["id"])
+	}
+	if _, ok := me["avatarUrl"]; !ok {
+		t.Fatalf("missing avatarUrl: %v", me)
+	}
+	for _, flag := range []string{"canSendMessage", "canSendFile", "canCreateGroup"} {
+		if me[flag] != true {
+			t.Fatalf("%s = %v, want true", flag, me[flag])
+		}
+	}
+
+	got := getMe(t, jia.client, srv.URL)
+	if got["nickname"] != "新昵称" || got["key"] != "patch-key-jia" {
+		t.Fatalf("stored me = %v", got)
+	}
+	if got["canSendMessage"] != true || got["canSendFile"] != true || got["canCreateGroup"] != true {
+		t.Fatalf("flags = %v", got)
+	}
+	yiMe := getMe(t, yi.client, srv.URL)
+	if yiMe["nickname"] != "乙" || yiMe["key"] != "patch-key-yi" {
+		t.Fatalf("other user changed: %v", yiMe)
+	}
+
+	longNick := strings.Repeat("字", 33)
+	for _, body := range []string{
+		`{"nickname":"a\nb"}`,
+		`{"nickname":"a\rb"}`,
+		`{"nickname":"   "}`,
+		`{"nickname":"` + longNick + `"}`,
+	} {
+		patchMe(t, jia.client, srv.URL, body, 400)
+	}
+	if again := getMe(t, jia.client, srv.URL); again["nickname"] != "新昵称" {
+		t.Fatalf("nickname changed after invalid patch: %v", again["nickname"])
+	}
+}
+
+func postAvatar(t *testing.T, c *http.Client, base, filename, mime string, data []byte) {
+	t.Helper()
+	body := &bytes.Buffer{}
+	w := multipart.NewWriter(body)
+	h := make(textproto.MIMEHeader)
+	h.Set("Content-Disposition", `form-data; name="file"; filename="`+filename+`"`)
+	h.Set("Content-Type", mime)
+	part, err := w.CreatePart(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequest(http.MethodPost, base+"/api/me/avatar", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	res, err := c.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resBody, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("avatar upload status=%d body=%s", res.StatusCode, resBody)
+	}
+}
+
+func patchMe(t *testing.T, c *http.Client, base, payload string, want int) map[string]any {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPatch, base+"/api/me", strings.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	res, err := c.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resBody, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != want {
+		t.Fatalf("patch me status=%d body=%s", res.StatusCode, resBody)
+	}
+	if want != 200 {
+		return nil
+	}
+	var me map[string]any
+	if err := json.Unmarshal(resBody, &me); err != nil {
+		t.Fatal(err)
+	}
+	return me
+}
+
 type apiClient struct {
 	client *http.Client
 }
