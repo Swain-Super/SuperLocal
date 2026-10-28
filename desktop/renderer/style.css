@@ -1,0 +1,118 @@
+:root {
+  color: #1f2329;
+  background: #f3f5f7;
+  font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: 14px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+.page {
+  min-height: 100vh;
+  padding: 16px;
+}
+
+.panel {
+  background: #ffffff;
+  border: 1px solid #e6e8eb;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+h2 {
+  margin: 20px 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.status {
+  margin: 8px 0 16px;
+  color: #646a73;
+}
+
+.status[data-status="running"] {
+  color: #22a06b;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: #646a73;
+}
+
+input {
+  height: 36px;
+  border: 1px solid #e6e8eb;
+  border-radius: 8px;
+  padding: 0 10px;
+  color: #1f2329;
+  font: inherit;
+  background: #ffffff;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+button {
+  height: 36px;
+  border: 1px solid #e6e8eb;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #1f2329;
+  font: inherit;
+  padding: 0 14px;
+}
+
+button.primary {
+  background: #0b6bcb;
+  border-color: #0b6bcb;
+  color: #ffffff;
+}
+
+button.primary:active {
+  background: #0958a8;
+  border-color: #0958a8;
+}
+
+button:disabled {
+  opacity: 0.45;
+}
+
+.error,
+.meta {
+  color: #646a73;
+  margin: 12px 0 0;
+}
+
+ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+li {
+  margin: 4px 0;
+  word-break: break-all;
+  user-select: text;
+}
+
+.secret p {
+  margin: 4px 0;
+  user-select: text;
+}

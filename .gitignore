@@ -36,5 +36,11 @@ go.work.sum
 .worktrees
 .superpowers
 
+# Electron launcher build output
+desktop/node_modules/
+desktop/dist/
+desktop/binaries/
+desktop/release/
+
 # Vite hashed assets. The placeholder index.html stays tracked.
 internal/web/dist/assets/

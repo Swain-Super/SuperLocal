@@ -1,0 +1,25 @@
+appId: com.superlocal.launcher
+productName: SuperLocal
+directories:
+  output: release
+files:
+  - dist/**
+  - src/**
+  - assets/**
+  - package.json
+extraResources:
+  - from: binaries
+    to: .
+    filter:
+      - superlocal
+      - superlocal.exe
+mac:
+  identity: null
+  target:
+    - dmg
+win:
+  target:
+    - nsis
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
