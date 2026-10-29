@@ -1,14 +1,14 @@
-import { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, shell } from "electron";
+import { app, BrowserWindow, Menu, Tray, clipboard, ipcMain, nativeImage, shell } from "electron";
 import { spawn, execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { localOnlyUrls, urlsFromBanner } from "./banner.js";
+import { applyLanUrls, lanUrls, urlsFromBanner } from "./banner.js";
 import { launcherPaths, serviceBinaryPath } from "./paths.js";
 import { decidePid, exeFromCommand, parsePid } from "./pid.js";
 import { parsePort } from "./port.js";
 import { readSecretFile } from "./secret.js";
 import { readSettingsFile, writeSettingsFile } from "./settings.js";
-import { lastNonEmptyLine, requestStop, watchStartup } from "./supervisor.js";
+import { explainStartupError, requestStop, watchStartup } from "./supervisor.js";
 
 let win = null;
 let tray = null;
@@ -37,6 +37,18 @@ function publish() {
     win.webContents.send("launcher:state", state);
   }
   rebuildTray();
+}
+
+function refreshAddresses() {
+  if (!state || state.status !== "running") {
+    publish();
+    return { ...state, addressChanged: false };
+  }
+  const next = applyLanUrls(state, lanUrls(state.port));
+  state.chatUrls = next.chatUrls;
+  state.adminUrls = next.adminUrls;
+  publish();
+  return { ...state, addressChanged: next.changed };
 }
 
 function refreshSecret() {
@@ -105,7 +117,7 @@ function readExe(pid) {
       );
       return;
     }
-    execFile("ps", ["-p", String(pid), "-o", "args="], { timeout: 3000 }, (err, out) => {
+    execFile("ps", ["-ww", "-p", String(pid), "-o", "args="], { timeout: 3000 }, (err, out) => {
       resolve(err ? null : exeFromCommand(out));
     });
   });
@@ -140,9 +152,22 @@ async function adoptLeftover() {
   childPid = pid;
   state.status = "running";
   state.error = "";
-  const urls = localOnlyUrls(state.port);
+  const urls = lanUrls(state.port);
   state.chatUrls = urls.chatUrls;
   state.adminUrls = urls.adminUrls;
+  if (await probeHttp(state.port)) {
+    return;
+  }
+  await finishStop(pid);
+  if (isAlive(pid)) {
+    state.status = "running";
+    state.error = "上次的服务没有响应";
+    return;
+  }
+  state.status = "failed";
+  state.error = "上次的服务没有响应，已停止";
+  state.chatUrls = [];
+  state.adminUrls = [];
 }
 
 async function finishStop(pid) {
@@ -212,10 +237,10 @@ async function runStart(port) {
   childPid = proc.pid;
   writePid(proc.pid);
   proc.stdout.on("data", (buf) => {
-    stdoutText += buf.toString();
+    stdoutText = appendTail(stdoutText, buf);
   });
   proc.stderr.on("data", (buf) => {
-    stderrText += buf.toString();
+    stderrText = appendTail(stderrText, buf);
   });
 
   let settled = false;
@@ -231,7 +256,7 @@ async function runStart(port) {
     proc.once("error", (err) => finish(err.message));
   });
 
-  const outcome = await watchStartup({
+  let outcome = await watchStartup({
     exited,
     probe: () => probeHttp(port),
     shouldStop: () => stopRequested,
@@ -239,6 +264,13 @@ async function runStart(port) {
     delay,
     readStderr: () => stderrText,
   });
+  if (outcome.status === "running" && !isAlive(proc.pid)) {
+    outcome = {
+      status: "failed",
+      error: explainStartupError(stderrText),
+      kill: false,
+    };
+  }
 
   if (outcome.kill) {
     await finishStop(proc.pid);
@@ -269,14 +301,14 @@ async function runStart(port) {
     childPid = proc.pid;
     refreshSecret();
     publish();
-    proc.once("exit", () => {
+    proc.once("exit", (code) => {
       if (childPid !== proc.pid || state.status !== "running") {
         return;
       }
       childPid = null;
       clearPid();
       state.status = "stopped";
-      state.error = lastNonEmptyLine(stderrText);
+      state.error = code === 0 ? "" : explainStartupError(stderrText);
       refreshSecret();
       publish();
     });
@@ -286,12 +318,12 @@ async function runStart(port) {
   if (isAlive(proc.pid)) {
     childPid = proc.pid;
     state.status = "running";
-    state.error = outcome.error;
+    state.error = explainStartupError(outcome.error);
   } else {
     childPid = null;
     clearPid();
     state.status = "failed";
-    state.error = outcome.error;
+    state.error = explainStartupError(outcome.error);
     if (stdoutText.includes("http://")) {
       const urls = urlsFromBanner(stdoutText, port);
       state.chatUrls = urls.chatUrls;
@@ -343,15 +375,21 @@ function updatePort(rawPort) {
   return state;
 }
 
+function appendTail(current, chunk) {
+  const next = current + chunk.toString();
+  return next.length > 16384 ? next.slice(-16384) : next;
+}
+
 function openLocal(kind) {
   if (state.status !== "running") {
     return;
   }
-  const url =
-    kind === "admin"
-      ? `http://127.0.0.1:${state.port}/admin`
-      : `http://127.0.0.1:${state.port}/`;
-  shell.openExternal(url);
+  const base = `http://127.0.0.1:${state.port}`;
+  if (kind === "admin") {
+    shell.openExternal(`${base}/admin`);
+    return;
+  }
+  shell.openExternal(`${base}/`);
 }
 
 function rebuildTray() {
@@ -396,13 +434,14 @@ function rebuildTray() {
 
 function createWindow() {
   win = new BrowserWindow({
-    width: 420,
-    height: 640,
-    minWidth: 380,
-    minHeight: 520,
+    width: 440,
+    height: 680,
+    minWidth: 400,
+    minHeight: 560,
     title: "SuperLocal",
     backgroundColor: "#F3F5F7",
     autoHideMenuBar: true,
+    show: false,
     webPreferences: {
       preload: path.join(app.getAppPath(), "src/preload.cjs"),
       contextIsolation: true,
@@ -411,6 +450,9 @@ function createWindow() {
     },
   });
   win.loadFile(path.join(app.getAppPath(), "dist/index.html"));
+  win.once("ready-to-show", () => {
+    win.show();
+  });
   win.on("close", (event) => {
     if (!quitting) {
       event.preventDefault();
@@ -424,7 +466,10 @@ function createWindow() {
 }
 
 function createTray() {
-  const image = nativeImage.createFromPath(path.join(app.getAppPath(), "assets/tray.png"));
+  const image = nativeImage.createFromPath(path.join(app.getAppPath(), "assets/trayTemplate.png"));
+  if (process.platform === "darwin") {
+    image.setTemplateImage(true);
+  }
   tray = new Tray(image.isEmpty() ? nativeImage.createEmpty() : image);
   tray.setToolTip("SuperLocal");
   tray.on("click", () => showWindow());
@@ -475,6 +520,15 @@ if (!gotLock) {
     ipcMain.handle("launcher:openAdmin", () => {
       openLocal("admin");
       return state;
+    });
+    ipcMain.handle("launcher:refreshAddresses", () => refreshAddresses());
+    ipcMain.handle("launcher:copy", (_event, text) => {
+      const value = String(text ?? "");
+      if (!value || value.length > 2000) {
+        return false;
+      }
+      clipboard.writeText(value);
+      return true;
     });
     createWindow();
     createTray();

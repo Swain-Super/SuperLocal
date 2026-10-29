@@ -1,3 +1,5 @@
+import os from "node:os";
+
 // parseBanner 从服务标准输出里取出聊天地址和后台地址。
 export function parseBanner(text) {
   const chatUrls = [];
@@ -22,19 +24,70 @@ export function parseBanner(text) {
   return { chatUrls, adminUrls };
 }
 
-export function localOnlyUrls(port) {
-  return {
-    chatUrls: [`http://127.0.0.1:${port}/`],
-    adminUrls: [`http://127.0.0.1:${port}/admin`],
-  };
+function isLoopback(hostname) {
+  const host = String(hostname).replace(/^\[|\]$/g, "").toLowerCase();
+  return host === "localhost" || host === "::1" || host === "0.0.0.0" || host.startsWith("127.");
 }
 
-// urlsFromBanner 在某一侧没有地址时，用本机地址补上。
+function isShareable(urlText) {
+  try {
+    const host = new URL(urlText).hostname;
+    if (isLoopback(host) || host.startsWith("169.254.") || host.toLowerCase().startsWith("fe80:")) {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// lanUrls 列出本机局域网 IPv4 上的聊天页和后台页。
+export function lanUrls(port) {
+  const chatUrls = [];
+  const adminUrls = [];
+  const seen = new Set();
+  for (const addrs of Object.values(os.networkInterfaces())) {
+    for (const addr of addrs ?? []) {
+      if (addr.internal || (addr.family !== "IPv4" && addr.family !== 4)) {
+        continue;
+      }
+      if (!isShareable(`http://${addr.address}/`) || seen.has(addr.address)) {
+        continue;
+      }
+      seen.add(addr.address);
+      chatUrls.push(`http://${addr.address}:${port}/`);
+      adminUrls.push(`http://${addr.address}:${port}/admin`);
+    }
+  }
+  return { chatUrls, adminUrls };
+}
+
+function sameList(left, right) {
+  if (left.length !== right.length) {
+    return false;
+  }
+  for (let i = 0; i < left.length; i += 1) {
+    if (left[i] !== right[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// applyLanUrls 用刚扫到的局域网地址替换当前展示。地址集合变了才标记 changed。
+export function applyLanUrls(current, next) {
+  const chatUrls = next?.chatUrls ?? [];
+  const adminUrls = next?.adminUrls ?? [];
+  const changed = !sameList(current?.chatUrls ?? [], chatUrls) || !sameList(current?.adminUrls ?? [], adminUrls);
+  return { changed, chatUrls, adminUrls };
+}
+
+// urlsFromBanner 只保留局域网地址。port 保留给调用方，展示不再补 127.0.0.1。
 export function urlsFromBanner(text, port) {
+  void port;
   const parsed = parseBanner(text);
-  const local = localOnlyUrls(port);
   return {
-    chatUrls: parsed.chatUrls.length ? parsed.chatUrls : local.chatUrls,
-    adminUrls: parsed.adminUrls.length ? parsed.adminUrls : local.adminUrls,
+    chatUrls: parsed.chatUrls.filter(isShareable),
+    adminUrls: parsed.adminUrls.filter(isShareable),
   };
 }

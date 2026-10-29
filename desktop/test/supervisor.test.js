@@ -1,10 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { lastNonEmptyLine, requestStop, watchStartup } from "../src/supervisor.js";
+import { explainStartupError, lastNonEmptyLine, requestStop, watchStartup } from "../src/supervisor.js";
 
 function immediateDelay() {
   return () => Promise.resolve();
 }
+
+test("常见启动失败改成中文", () => {
+  assert.equal(
+    explainStartupError("listen tcp :8080: bind: address already in use\n"),
+    "端口已被占用",
+  );
+  assert.equal(explainStartupError("listen tcp :80: bind: permission denied"), "没有权限监听这个端口");
+  assert.equal(explainStartupError("服务在 10 秒内没有开始监听"), "服务在 10 秒内没有开始监听");
+  assert.equal(explainStartupError(""), "服务启动失败");
+});
 
 test("标准错误取最后一行非空文本", () => {
   assert.equal(lastNonEmptyLine("first\n\nlisten tcp :8080: bind: address already in use\n"), "listen tcp :8080: bind: address already in use");

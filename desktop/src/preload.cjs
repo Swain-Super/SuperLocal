@@ -7,6 +7,8 @@ contextBridge.exposeInMainWorld("launcher", {
   setPort: (port) => ipcRenderer.invoke("launcher:setPort", port),
   openChat: () => ipcRenderer.invoke("launcher:openChat"),
   openAdmin: () => ipcRenderer.invoke("launcher:openAdmin"),
+  refreshAddresses: () => ipcRenderer.invoke("launcher:refreshAddresses"),
+  copy: (text) => ipcRenderer.invoke("launcher:copy", text),
   onState: (callback) => {
     const listener = (_event, next) => callback(next);
     ipcRenderer.on("launcher:state", listener);

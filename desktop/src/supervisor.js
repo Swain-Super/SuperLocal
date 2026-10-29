@@ -1,3 +1,14 @@
+export function explainStartupError(text) {
+  const line = lastNonEmptyLine(text);
+  if (/address already in use|EADDRINUSE/i.test(line)) {
+    return "端口已被占用";
+  }
+  if (/EACCES|permission denied/i.test(line)) {
+    return "没有权限监听这个端口";
+  }
+  return line || "服务启动失败";
+}
+
 export function lastNonEmptyLine(text) {
   const lines = String(text ?? "")
     .split(/\r?\n/)

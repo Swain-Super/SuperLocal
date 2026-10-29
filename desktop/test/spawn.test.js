@@ -49,8 +49,8 @@ test("服务程序能按端口启动并写出管理员密码", async (t) => {
   });
   assert.equal(outcome.status, "running");
   const urls = urlsFromBanner(stdoutText, port);
-  assert.ok(urls.chatUrls.includes(`http://127.0.0.1:${port}/`));
-  assert.ok(urls.adminUrls.includes(`http://127.0.0.1:${port}/admin`));
+  assert.equal(urls.chatUrls.some((url) => url.includes("127.0.0.1")), false);
+  assert.equal(urls.adminUrls.some((url) => url.includes("127.0.0.1")), false);
   const secret = readSecretFile(dataDir);
   assert.equal(secret.secretState, "ready");
   assert.equal(secret.username, "admin");
