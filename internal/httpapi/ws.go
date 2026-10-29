@@ -18,6 +18,10 @@ type wsIncoming struct {
 	Text           string `json:"text"`
 	Body           string `json:"body"`
 	FileID         string `json:"fileId"`
+	ReplyToID      string `json:"replyToId"`
+	MessageID      string `json:"messageId"`
+	Emoji          string `json:"emoji"`
+	N              int64  `json:"n"`
 }
 
 func (s *server) handleWS(w http.ResponseWriter, r *http.Request) {
@@ -69,6 +73,12 @@ func (s *server) handleWS(w http.ResponseWriter, r *http.Request) {
 		switch in.Type {
 		case "message.send":
 			s.handleWSMessageSend(conn, user, in)
+		case "message.recall":
+			s.handleWSRecall(conn, user, in)
+		case "message.react":
+			s.handleWSReact(conn, user, in)
+		case "ping":
+			s.writeWSPong(conn, in.N)
 		default:
 			s.writeWSError(conn, "未知事件")
 		}
@@ -84,19 +94,40 @@ func (s *server) handleWSMessageSend(conn *websocket.Conn, user store.User, in w
 	if body == "" {
 		body = in.Body
 	}
-	msg, err := s.db.PostMessage(user.ID, in.ConversationID, kind, body, in.FileID, s.now())
+	msg, err := s.db.PostReply(user.ID, in.ConversationID, kind, body, in.FileID, in.ReplyToID, s.now())
 	if err != nil {
 		s.writeWSError(conn, err.Error())
 		return
 	}
+	s.pushMessage(conn, in.ConversationID, "message.new", msg)
+}
 
-	memberIDs, err := s.conversationMemberIDs(in.ConversationID)
+func (s *server) handleWSRecall(conn *websocket.Conn, user store.User, in wsIncoming) {
+	msg, err := s.db.RecallMessage(user.ID, in.MessageID, s.now())
+	if err != nil {
+		s.writeWSError(conn, err.Error())
+		return
+	}
+	s.pushMessage(conn, msg.ConversationID, "message.updated", msg)
+}
+
+func (s *server) handleWSReact(conn *websocket.Conn, user store.User, in wsIncoming) {
+	msg, err := s.db.ToggleReaction(user.ID, in.MessageID, in.Emoji, s.now())
+	if err != nil {
+		s.writeWSError(conn, err.Error())
+		return
+	}
+	s.pushMessage(conn, msg.ConversationID, "message.updated", msg)
+}
+
+func (s *server) pushMessage(conn *websocket.Conn, convID, eventType string, msg store.Message) {
+	memberIDs, err := s.conversationMemberIDs(convID)
 	if err != nil {
 		s.writeWSError(conn, "推送失败")
 		return
 	}
 	payload, err := json.Marshal(map[string]any{
-		"type":    "message.new",
+		"type":    eventType,
 		"message": msg,
 	})
 	if err != nil {
@@ -125,6 +156,25 @@ func (s *server) conversationMemberIDs(convID string) ([]string, error) {
 	return ids, rows.Err()
 }
 
+func (s *server) broadcastDnd(userID string, quiet bool) {
+	if s.hub == nil {
+		return
+	}
+	payload, err := json.Marshal(map[string]any{
+		"type":   "dnd",
+		"userId": userID,
+		"dnd":    quiet,
+	})
+	if err != nil {
+		return
+	}
+	ids := make([]string, 0)
+	for id := range s.hub.OnlineIDs() {
+		ids = append(ids, id)
+	}
+	s.hub.Send(ids, payload)
+}
+
 func (s *server) broadcastPresence(userID string, online bool) {
 	if s.hub == nil {
 		return
@@ -143,6 +193,19 @@ func (s *server) broadcastPresence(userID string, online bool) {
 	}
 	// 下线时本人已不在 OnlineIDs；仍把 payload 发给当前在线用户即可。
 	s.hub.Send(ids, payload)
+}
+
+func (s *server) writeWSPong(conn *websocket.Conn, n int64) {
+	payload, err := json.Marshal(map[string]any{
+		"type": "pong",
+		"n":    n,
+	})
+	if err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_ = conn.Write(ctx, websocket.MessageText, payload)
 }
 
 func (s *server) writeWSError(conn *websocket.Conn, msg string) {

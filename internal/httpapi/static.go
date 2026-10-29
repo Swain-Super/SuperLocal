@@ -56,5 +56,6 @@ func serveIndex(w http.ResponseWriter, r *http.Request, dist fs.FS) {
 		http.Error(w, "页面不存在", http.StatusInternalServerError)
 		return
 	}
+	w.Header().Set("Cache-Control", "no-cache")
 	http.ServeContent(w, r, "index.html", info.ModTime(), rs)
 }

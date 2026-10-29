@@ -46,11 +46,14 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	setSessionCookie(w, cookieSession, token)
-	writeJSON(w, http.StatusOK, store.MeView(user))
+	writeJSON(w, http.StatusOK, struct {
+		store.Me
+		Token string `json:"token"`
+	}{Me: store.MeView(user), Token: token})
 }
 
 func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
-	token := readCookie(r, cookieSession)
+	token := userToken(r)
 	if token != "" {
 		_ = s.db.DeleteSession(token)
 	}
@@ -63,7 +66,7 @@ func (s *server) handleMe(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, store.MeView(user))
+	writeJSON(w, http.StatusOK, s.meView(user, r))
 }
 
 func (s *server) handlePatchMe(w http.ResponseWriter, r *http.Request) {
@@ -72,22 +75,36 @@ func (s *server) handlePatchMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Nickname string `json:"nickname"`
+		Nickname  *string `json:"nickname"`
+		Signature *string `json:"signature"`
+		Pendant   *string `json:"pendant"`
+		Dnd       *bool   `json:"dnd"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "请求无效")
 		return
 	}
-	updated, err := s.db.UpdateNickname(user.ID, req.Nickname)
+	if req.Nickname == nil && req.Signature == nil && req.Pendant == nil && req.Dnd == nil {
+		writeError(w, http.StatusBadRequest, "请求无效")
+		return
+	}
+	updated, err := s.db.UpdateProfile(user.ID, req.Nickname, req.Signature, req.Pendant, req.Dnd)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, store.MeView(updated))
+	s.broadcastDnd(updated.ID, updated.Dnd)
+	writeJSON(w, http.StatusOK, s.meView(updated, r))
+}
+
+func (s *server) meView(user store.User, r *http.Request) store.Me {
+	me := store.MeView(user)
+	me.IP = s.clientIP(r)
+	return me
 }
 
 func (s *server) requireUser(w http.ResponseWriter, r *http.Request) (store.User, bool) {
-	token := readCookie(r, cookieSession)
+	token := userToken(r)
 	if token == "" {
 		writeError(w, http.StatusUnauthorized, "未登录")
 		return store.User{}, false

@@ -9,17 +9,36 @@ import (
 )
 
 type Message struct {
-	ID             string    `json:"id"`
-	ConversationID string    `json:"conversationId"`
-	SenderID       string    `json:"senderId"`
-	SenderNickname string    `json:"senderNickname"`
-	Kind           string    `json:"kind"`
-	Body           string    `json:"body"`
-	FileID         string    `json:"fileId"`
-	FileName       string    `json:"fileName"`
-	FileSize       int64     `json:"fileSize"`
-	Mime           string    `json:"mime"`
-	CreatedAt      time.Time `json:"createdAt"`
+	ID             string         `json:"id"`
+	ConversationID string         `json:"conversationId"`
+	SenderID       string         `json:"senderId"`
+	SenderNickname string         `json:"senderNickname"`
+	Kind           string         `json:"kind"`
+	Body           string         `json:"body"`
+	FileID         string         `json:"fileId"`
+	FileName       string         `json:"fileName"`
+	FileSize       int64          `json:"fileSize"`
+	Mime           string         `json:"mime"`
+	CreatedAt      time.Time      `json:"createdAt"`
+	ReplyToID      string         `json:"replyToId,omitempty"`
+	Reply          *ReplyView     `json:"reply,omitempty"`
+	Recalled       bool           `json:"recalled"`
+	Reactions      []ReactionView `json:"reactions,omitempty"`
+}
+
+type ReplyView struct {
+	ID             string `json:"id"`
+	SenderNickname string `json:"senderNickname"`
+	Kind           string `json:"kind"`
+	Body           string `json:"body"`
+	FileName       string `json:"fileName,omitempty"`
+	Recalled       bool   `json:"recalled"`
+}
+
+type ReactionView struct {
+	Emoji string `json:"emoji"`
+	Count int    `json:"count"`
+	Self  bool   `json:"self"`
 }
 
 type ConversationView struct {
@@ -32,6 +51,8 @@ type ConversationView struct {
 	Unread      int         `json:"unread"`
 	LastBody    string      `json:"lastBody"`
 	LastAt      time.Time   `json:"lastAt"`
+	Pinned      bool        `json:"pinned"`
+	Muted       bool        `json:"muted"`
 }
 
 // directKey 把两个用户 id 按字符串排序后用 | 连接，保证同一对用户只有一个键。
@@ -103,6 +124,14 @@ func (db *DB) conversationIDByDirectKey(key string) (string, error) {
 }
 
 func (db *DB) PostMessage(senderID, convID, kind, body, fileID string, now time.Time) (Message, error) {
+	return db.postMessage(senderID, convID, kind, body, fileID, "", now)
+}
+
+func (db *DB) PostReply(senderID, convID, kind, body, fileID, replyToID string, now time.Time) (Message, error) {
+	return db.postMessage(senderID, convID, kind, body, fileID, replyToID, now)
+}
+
+func (db *DB) postMessage(senderID, convID, kind, body, fileID, replyToID string, now time.Time) (Message, error) {
 	sender, err := db.UserByID(senderID)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -140,6 +169,13 @@ func (db *DB) PostMessage(senderID, convID, kind, body, fileID string, now time.
 	if member == 0 {
 		return Message{}, fmt.Errorf("不是会话成员")
 	}
+	if replyToID != "" {
+		var replyConv string
+		err = db.sql.QueryRow(`SELECT conversation_id FROM messages WHERE id = ?`, replyToID).Scan(&replyConv)
+		if err != nil || replyConv != convID {
+			return Message{}, fmt.Errorf("引用的消息不存在")
+		}
+	}
 	if kind == "text" {
 		if strings.TrimSpace(body) == "" {
 			return Message{}, fmt.Errorf("文字不能为空")
@@ -155,18 +191,21 @@ func (db *DB) PostMessage(senderID, convID, kind, body, fileID string, now time.
 		}
 	}
 	if convType == "direct" {
-		var banned int
+		var banned, quiet int
 		err = db.sql.QueryRow(
-			`SELECT u.banned FROM members m
+			`SELECT u.banned, u.dnd FROM members m
 			 JOIN users u ON u.id = m.user_id
 			 WHERE m.conversation_id = ? AND m.user_id != ?`,
 			convID, senderID,
-		).Scan(&banned)
+		).Scan(&banned, &quiet)
 		if err != nil {
 			return Message{}, err
 		}
 		if banned != 0 {
 			return Message{}, fmt.Errorf("对方已被封禁")
+		}
+		if quiet != 0 {
+			return Message{}, fmt.Errorf("对方已开启免打扰")
 		}
 	}
 
@@ -180,9 +219,9 @@ func (db *DB) PostMessage(senderID, convID, kind, body, fileID string, now time.
 		}
 		defer tx.Rollback()
 		if _, txErr = tx.Exec(
-			`INSERT INTO messages (id, conversation_id, sender_id, kind, body, file_id, created_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			id, convID, senderID, kind, body, fileID, now.UnixMilli(),
+			`INSERT INTO messages (id, conversation_id, sender_id, kind, body, file_id, created_at, reply_to_id)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			id, convID, senderID, kind, body, fileID, now.UnixMilli(), replyToID,
 		); txErr != nil {
 			return txErr
 		}
@@ -203,7 +242,7 @@ func (db *DB) PostMessage(senderID, convID, kind, body, fileID string, now time.
 	if err != nil {
 		return Message{}, err
 	}
-	return Message{
+	msg := Message{
 		ID:             id,
 		ConversationID: convID,
 		SenderID:       senderID,
@@ -215,7 +254,14 @@ func (db *DB) PostMessage(senderID, convID, kind, body, fileID string, now time.
 		FileSize:       fileSize,
 		Mime:           mime,
 		CreatedAt:      unixMilliTime(now.UnixMilli()),
-	}, nil
+		ReplyToID:      replyToID,
+	}
+	if replyToID != "" {
+		if reply, err := db.replyView(replyToID); err == nil {
+			msg.Reply = reply
+		}
+	}
+	return msg, nil
 }
 
 func (db *DB) ListConversations(userID string, online map[string]bool) ([]ConversationView, error) {
@@ -223,10 +269,12 @@ func (db *DB) ListConversations(userID string, online map[string]bool) ([]Conver
 		SELECT c.id, c.type, c.owner_id, c.name,
 			(SELECT COUNT(*) FROM members m WHERE m.conversation_id = c.id),
 			COALESCE((
-				SELECT COALESCE(
-					(SELECT name FROM files WHERE id = messages.file_id AND messages.file_id != ''),
-					messages.body
-				)
+				SELECT CASE WHEN messages.recalled = 1 THEN '撤回了一条消息'
+					ELSE COALESCE(
+						(SELECT name FROM files WHERE id = messages.file_id AND messages.file_id != ''),
+						messages.body
+					)
+				END
 				FROM messages
 				WHERE conversation_id = c.id
 				ORDER BY id DESC
@@ -236,14 +284,15 @@ func (db *DB) ListConversations(userID string, online map[string]bool) ([]Conver
 			(SELECT COUNT(*) FROM messages msg
 				WHERE msg.conversation_id = c.id
 					AND msg.id > self.last_read_id
-					AND msg.sender_id != self.user_id)
+					AND msg.sender_id != self.user_id),
+			self.pinned, self.muted
 		FROM conversations c
 		JOIN members self ON self.conversation_id = c.id AND self.user_id = ?
 		WHERE c.dissolved = 0
 			AND (c.type != 'direct' OR EXISTS (
 				SELECT 1 FROM messages m WHERE m.conversation_id = c.id
 			))
-		ORDER BY COALESCE((SELECT created_at FROM messages WHERE conversation_id = c.id ORDER BY id DESC LIMIT 1), 0) DESC, c.id DESC
+		ORDER BY self.pinned DESC, COALESCE((SELECT created_at FROM messages WHERE conversation_id = c.id ORDER BY id DESC LIMIT 1), 0) DESC, c.id DESC
 	`, userID)
 	if err != nil {
 		return nil, err
@@ -258,13 +307,17 @@ func (db *DB) ListConversations(userID string, online map[string]bool) ([]Conver
 	for rows.Next() {
 		var item pendingView
 		var lastAt int64
+		var pinned, muted int
 		if err := rows.Scan(
 			&item.view.ID, &item.view.Type, &item.view.OwnerID, &item.name,
 			&item.view.MemberCount, &item.view.LastBody, &lastAt, &item.view.Unread,
+			&pinned, &muted,
 		); err != nil {
 			return nil, err
 		}
 		item.view.LastAt = unixMilliTime(lastAt)
+		item.view.Pinned = pinned != 0
+		item.view.Muted = muted != 0
 		pending = append(pending, item)
 	}
 	if err := rows.Err(); err != nil {
@@ -503,6 +556,53 @@ func (db *DB) AddMembers(actorID, convID string, memberIDs []string, now time.Ti
 	})
 }
 
+func (db *DB) RemoveMember(actorID, convID, targetID string) error {
+	if actorID == "" || targetID == "" || actorID == targetID {
+		return fmt.Errorf("不能移出自己")
+	}
+	var convType, ownerID string
+	var dissolved int
+	err := db.sql.QueryRow(
+		`SELECT type, owner_id, dissolved FROM conversations WHERE id = ?`, convID,
+	).Scan(&convType, &ownerID, &dissolved)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("会话不存在")
+		}
+		return err
+	}
+	if dissolved != 0 || convType != "group" {
+		return fmt.Errorf("会话不存在")
+	}
+	if actorID != ownerID {
+		return fmt.Errorf("只有创建者可以移出成员")
+	}
+	member, err := db.isMember(convID, targetID)
+	if err != nil {
+		return err
+	}
+	if !member {
+		return fmt.Errorf("不是会话成员")
+	}
+	return db.withLockRetry(func() error {
+		res, execErr := db.sql.Exec(
+			`DELETE FROM members WHERE conversation_id = ? AND user_id = ?`,
+			convID, targetID,
+		)
+		if execErr != nil {
+			return execErr
+		}
+		n, execErr := res.RowsAffected()
+		if execErr != nil {
+			return execErr
+		}
+		if n == 0 {
+			return fmt.Errorf("不是会话成员")
+		}
+		return nil
+	})
+}
+
 func (db *DB) Leave(userID, convID string) error {
 	return db.withLockRetry(func() error {
 		tx, txErr := db.sql.Begin()
@@ -577,6 +677,7 @@ func (db *DB) Messages(userID, convID, afterID string) ([]Message, error) {
 	}
 	rows, err := db.sql.Query(`
 		SELECT m.id, m.conversation_id, m.sender_id, COALESCE(u.nickname, ''), m.kind, m.body, m.file_id, m.created_at,
+			COALESCE(m.reply_to_id, ''), m.recalled,
 			COALESCE(f.name, ''), COALESCE(f.mime, ''), COALESCE(f.size, 0)
 		FROM messages m
 		LEFT JOIN users u ON u.id = m.sender_id
@@ -592,17 +693,23 @@ func (db *DB) Messages(userID, convID, afterID string) ([]Message, error) {
 	for rows.Next() {
 		var msg Message
 		var created int64
+		var recalled int
 		if err := rows.Scan(
 			&msg.ID, &msg.ConversationID, &msg.SenderID, &msg.SenderNickname,
 			&msg.Kind, &msg.Body, &msg.FileID, &created,
+			&msg.ReplyToID, &recalled,
 			&msg.FileName, &msg.Mime, &msg.FileSize,
 		); err != nil {
 			return nil, err
 		}
 		msg.CreatedAt = unixMilliTime(created)
-		out = append(out, msg)
+		msg.Recalled = recalled != 0
+		out = append(out, hideRecalled(msg))
 	}
 	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := db.attachMessageExtras(userID, out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -638,7 +745,7 @@ func (db *DB) MarkRead(userID, convID, messageID string) error {
 
 func (db *DB) SearchUsers(query string) ([]PublicUser, error) {
 	rows, err := db.sql.Query(`
-		SELECT id, nickname, avatar_path FROM users
+		SELECT id, nickname, avatar_path, signature, pendant, dnd FROM users
 		WHERE banned = 0 AND nickname LIKE '%' || ? || '%'
 		ORDER BY nickname, id
 		LIMIT 50`, query)
@@ -649,11 +756,12 @@ func (db *DB) SearchUsers(query string) ([]PublicUser, error) {
 
 	out := []PublicUser{}
 	for rows.Next() {
-		var id, nickname, avatar string
-		if err := rows.Scan(&id, &nickname, &avatar); err != nil {
+		var id, nickname, avatar, signature, pendant string
+		var quiet int
+		if err := rows.Scan(&id, &nickname, &avatar, &signature, &pendant, &quiet); err != nil {
 			return nil, err
 		}
-		out = append(out, Public(User{ID: id, Nickname: nickname, AvatarPath: avatar}))
+		out = append(out, Public(User{ID: id, Nickname: nickname, AvatarPath: avatar, Signature: signature, Pendant: pendant, Dnd: quiet != 0}))
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

@@ -488,6 +488,87 @@ func TestAdmin(t *testing.T) {
 
 }
 
+func TestSessionsStayWithTheirToken(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	db := openHTTPDB(t)
+	srv := httptest.NewServer(httpapi.New(httpapi.Deps{
+		DB:      db,
+		DataDir: t.TempDir(),
+		Limiter: auth.NewLimiter(),
+		Now:     func() time.Time { return now },
+	}))
+	t.Cleanup(srv.Close)
+
+	login := func(key, nickname string) string {
+		t.Helper()
+		body := fmt.Sprintf(`{"key":%q,"nickname":%q}`, key, nickname)
+		res, err := http.Post(srv.URL+"/api/session", "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		raw, _ := io.ReadAll(res.Body)
+		if res.StatusCode != 200 {
+			t.Fatalf("login %s status=%d body=%s", key, res.StatusCode, raw)
+		}
+		var parsed struct {
+			Token string `json:"token"`
+		}
+		if err := json.Unmarshal(raw, &parsed); err != nil {
+			t.Fatal(err)
+		}
+		if parsed.Token == "" {
+			t.Fatal("login response missing token")
+		}
+		return parsed.Token
+	}
+	nicknameOf := func(token string) string {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodGet, srv.URL+"/api/me?token="+token, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		raw, _ := io.ReadAll(res.Body)
+		if res.StatusCode != 200 {
+			t.Fatalf("me status=%d body=%s", res.StatusCode, raw)
+		}
+		var parsed struct {
+			Nickname string `json:"nickname"`
+		}
+		if err := json.Unmarshal(raw, &parsed); err != nil {
+			t.Fatal(err)
+		}
+		return parsed.Nickname
+	}
+
+	tokenA := login("user-key1", "甲")
+	tokenB := login("user-key2", "乙")
+	if nicknameOf(tokenA) != "甲" || nicknameOf(tokenB) != "乙" {
+		t.Fatalf("tokens crossed: A=%s B=%s", nicknameOf(tokenA), nicknameOf(tokenB))
+	}
+
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/api/me", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-Superlocal-Tab", "1")
+	req.AddCookie(&http.Cookie{Name: "sl_session", Value: tokenB})
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("tab without its own token status=%d, want 401", res.StatusCode)
+	}
+}
+
 func openHTTPDB(t *testing.T) *store.DB {
 	t.Helper()
 	db, err := store.Open(filepath.Join(t.TempDir(), "app.db"))

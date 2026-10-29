@@ -1047,3 +1047,74 @@ func TestPermissions(t *testing.T) {
 		t.Fatalf("messages = %d, rejected sends were stored", messageCount)
 	}
 }
+
+func TestRemoveGroupMember(t *testing.T) {
+	db := openTestDB(t)
+	now := time.Unix(1_700_000_000, 0)
+	jia, err := db.LoginOrCreate("rm-jia", "甲", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	yi, err := db.LoginOrCreate("rm-yi", "乙", now.Add(time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bing, err := db.LoginOrCreate("rm-bing", "丙", now.Add(2*time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := db.CreateGroup(jia.ID, "移出群", []string{yi.ID, bing.ID}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RemoveMember(yi.ID, id, bing.ID); err == nil {
+		t.Fatal("expected error when a member removes someone")
+	}
+	if err := db.RemoveMember(jia.ID, id, jia.ID); err == nil {
+		t.Fatal("expected error when removing yourself")
+	}
+	if err := db.RemoveMember(jia.ID, id, bing.ID); err != nil {
+		t.Fatal(err)
+	}
+	list, err := db.Members(jia.ID, id, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("members = %d", len(list))
+	}
+}
+
+func TestDirectDoNotDisturb(t *testing.T) {
+	db := openTestDB(t)
+	now := time.Unix(1_700_000_000, 0)
+	jia, err := db.LoginOrCreate("dnd-jia", "甲", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	yi, err := db.LoginOrCreate("dnd-yi", "乙", now.Add(time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	convID, err := db.OpenDirect(jia.ID, yi.ID, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	on := true
+	if _, err := db.UpdateProfile(yi.ID, nil, nil, nil, &on); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.PostMessage(jia.ID, convID, "text", "打扰了", "", now); err == nil {
+		t.Fatal("expected error when the peer has do-not-disturb on")
+	}
+	if _, err := db.PostMessage(yi.ID, convID, "text", "我还能发", "", now); err != nil {
+		t.Fatal(err)
+	}
+	views, err := db.ListConversations(jia.ID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(views) != 1 || views[0].Peer == nil || !views[0].Peer.Dnd {
+		t.Fatalf("peer dnd = %+v", views)
+	}
+}

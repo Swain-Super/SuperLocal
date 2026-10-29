@@ -131,6 +131,18 @@ func (s *server) handleAddMembers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "1"})
 }
 
+func (s *server) handleRemoveMember(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+	if err := s.db.RemoveMember(user.ID, r.PathValue("id"), r.PathValue("userId")); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"ok": "1"})
+}
+
 func (s *server) handleLeaveGroup(w http.ResponseWriter, r *http.Request) {
 	user, ok := s.requireUser(w, r)
 	if !ok {
@@ -138,6 +150,42 @@ func (s *server) handleLeaveGroup(w http.ResponseWriter, r *http.Request) {
 	}
 	convID := r.PathValue("id")
 	if err := s.db.Leave(user.ID, convID); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"ok": "1"})
+}
+
+func (s *server) handleMembers(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+	list, err := s.db.Members(user.ID, r.PathValue("id"), s.hub.OnlineIDs())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if list == nil {
+		list = []store.PublicUser{}
+	}
+	writeJSON(w, http.StatusOK, list)
+}
+
+func (s *server) handleConversationFlags(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Pinned *bool `json:"pinned"`
+		Muted  *bool `json:"muted"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "请求无效")
+		return
+	}
+	if err := s.db.SetConversationFlags(user.ID, r.PathValue("id"), req.Pinned, req.Muted); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

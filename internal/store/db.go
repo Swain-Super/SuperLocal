@@ -21,7 +21,10 @@ CREATE TABLE IF NOT EXISTS users (
     can_send_file INTEGER NOT NULL DEFAULT 1,
     can_create_group INTEGER NOT NULL DEFAULT 1,
     last_seen_at INTEGER NOT NULL DEFAULT 0,
-    created_at INTEGER NOT NULL DEFAULT 0
+    created_at INTEGER NOT NULL DEFAULT 0,
+    signature TEXT NOT NULL DEFAULT '',
+    pendant TEXT NOT NULL DEFAULT '',
+    dnd INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -125,6 +128,42 @@ func migrate(sqlDB *sql.DB) error {
 			continue
 		}
 		if _, err := sqlDB.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	extras := []string{
+		`ALTER TABLE messages ADD COLUMN reply_to_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE messages ADD COLUMN recalled INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE members ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE members ADD COLUMN muted INTEGER NOT NULL DEFAULT 0`,
+		`CREATE TABLE IF NOT EXISTS reactions (
+			message_id TEXT NOT NULL,
+			user_id TEXT NOT NULL,
+			emoji TEXT NOT NULL,
+			created_at INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY (message_id, user_id, emoji)
+		)`,
+		`ALTER TABLE users ADD COLUMN signature TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE users ADD COLUMN pendant TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE users ADD COLUMN dnd INTEGER NOT NULL DEFAULT 0`,
+		`CREATE TABLE IF NOT EXISTS friend_requests (
+			from_id TEXT NOT NULL,
+			to_id TEXT NOT NULL,
+			created_at INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY (from_id, to_id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS friends (
+			user_id TEXT NOT NULL,
+			friend_id TEXT NOT NULL,
+			created_at INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY (user_id, friend_id)
+		)`,
+	}
+	for _, stmt := range extras {
+		if _, err := sqlDB.Exec(stmt); err != nil {
+			if strings.Contains(err.Error(), "duplicate column") {
+				continue
+			}
 			return err
 		}
 	}

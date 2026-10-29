@@ -51,14 +51,20 @@ func New(deps Deps) http.Handler {
 
 	mux.HandleFunc("GET /api/users/online", s.handleOnlineUsers)
 	mux.HandleFunc("GET /api/users", s.handleSearchUsers)
+	mux.HandleFunc("GET /api/friends", s.handleFriends)
+	mux.HandleFunc("POST /api/friends", s.handleRequestFriend)
+	mux.HandleFunc("DELETE /api/friends/{id}", s.handleRemoveFriend)
 
 	mux.HandleFunc("POST /api/conversations/direct", s.handleOpenDirect)
 	mux.HandleFunc("GET /api/conversations", s.handleListConversations)
 	mux.HandleFunc("GET /api/conversations/{id}/messages", s.handleMessages)
+	mux.HandleFunc("GET /api/conversations/{id}/members", s.handleMembers)
+	mux.HandleFunc("PATCH /api/conversations/{id}", s.handleConversationFlags)
 	mux.HandleFunc("POST /api/conversations/{id}/read", s.handleMarkRead)
 
 	mux.HandleFunc("POST /api/groups", s.handleCreateGroup)
 	mux.HandleFunc("POST /api/groups/{id}/members", s.handleAddMembers)
+	mux.HandleFunc("DELETE /api/groups/{id}/members/{userId}", s.handleRemoveMember)
 	mux.HandleFunc("POST /api/groups/{id}/leave", s.handleLeaveGroup)
 
 	mux.HandleFunc("POST /api/files", s.handleUpload)

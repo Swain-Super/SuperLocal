@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http"
+	"strings"
 )
 
 const (
@@ -38,4 +39,24 @@ func readCookie(r *http.Request, name string) string {
 		return ""
 	}
 	return c.Value
+}
+
+// 浏览器里每个标签页用自己的令牌。Authorization 和查询参数优先于共享的 Cookie。
+// 页面会带上 X-Superlocal-Tab。这种请求没有自己的令牌时，不再回退到 Cookie，
+// 否则新开的窗口会沿用上一次登录，登录页出不来。
+func userToken(r *http.Request) string {
+	header := r.Header.Get("Authorization")
+	if strings.HasPrefix(header, "Bearer ") {
+		token := strings.TrimSpace(strings.TrimPrefix(header, "Bearer "))
+		if token != "" {
+			return token
+		}
+	}
+	if token := strings.TrimSpace(r.URL.Query().Get("token")); token != "" {
+		return token
+	}
+	if r.Header.Get("X-Superlocal-Tab") == "1" {
+		return ""
+	}
+	return readCookie(r, cookieSession)
 }

@@ -9,16 +9,19 @@ import (
 )
 
 type User struct {
-	ID, Key, Nickname, AvatarPath                       string
-	Banned, CanSendMessage, CanSendFile, CanCreateGroup bool
-	LastSeenAt, CreatedAt                               time.Time
+	ID, Key, Nickname, AvatarPath, Signature, Pendant        string
+	Banned, CanSendMessage, CanSendFile, CanCreateGroup, Dnd bool
+	LastSeenAt, CreatedAt                                    time.Time
 }
 
 type PublicUser struct {
 	ID        string `json:"id"`
 	Nickname  string `json:"nickname"`
 	AvatarURL string `json:"avatarUrl"`
+	Signature string `json:"signature"`
+	Pendant   string `json:"pendant"`
 	Online    bool   `json:"online"`
+	Dnd       bool   `json:"dnd"`
 }
 
 type Me struct {
@@ -26,19 +29,26 @@ type Me struct {
 	Key            string `json:"key"`
 	Nickname       string `json:"nickname"`
 	AvatarURL      string `json:"avatarUrl"`
+	Signature      string `json:"signature"`
+	Pendant        string `json:"pendant"`
+	IP             string `json:"ip"`
 	CanSendMessage bool   `json:"canSendMessage"`
 	CanSendFile    bool   `json:"canSendFile"`
 	CanCreateGroup bool   `json:"canCreateGroup"`
+	Dnd            bool   `json:"dnd"`
 }
 
-const userColumns = `id, key, nickname, avatar_path, banned, can_send_message, can_send_file, can_create_group, last_seen_at, created_at`
+const userColumns = `id, key, nickname, avatar_path, banned, can_send_message, can_send_file, can_create_group, last_seen_at, created_at, signature, pendant, dnd`
 
 func Public(u User) PublicUser {
 	return PublicUser{
 		ID:        u.ID,
 		Nickname:  u.Nickname,
 		AvatarURL: avatarURL(u.ID, u.AvatarPath),
+		Signature: u.Signature,
+		Pendant:   u.Pendant,
 		Online:    false,
+		Dnd:       u.Dnd,
 	}
 }
 
@@ -48,9 +58,12 @@ func MeView(u User) Me {
 		Key:            u.Key,
 		Nickname:       u.Nickname,
 		AvatarURL:      avatarURL(u.ID, u.AvatarPath),
+		Signature:      u.Signature,
+		Pendant:        u.Pendant,
 		CanSendMessage: u.CanSendMessage,
 		CanSendFile:    u.CanSendFile,
 		CanCreateGroup: u.CanCreateGroup,
+		Dnd:            u.Dnd,
 	}
 }
 
@@ -127,12 +140,12 @@ func (db *DB) userByKey(key string) (User, error) {
 
 func scanUser(row *sql.Row) (User, error) {
 	var u User
-	var banned, canSendMessage, canSendFile, canCreateGroup int
+	var banned, canSendMessage, canSendFile, canCreateGroup, dnd int
 	var lastSeenAt, createdAt int64
 	err := row.Scan(
 		&u.ID, &u.Key, &u.Nickname, &u.AvatarPath,
 		&banned, &canSendMessage, &canSendFile, &canCreateGroup,
-		&lastSeenAt, &createdAt,
+		&lastSeenAt, &createdAt, &u.Signature, &u.Pendant, &dnd,
 	)
 	if err != nil {
 		return User{}, err
@@ -141,6 +154,7 @@ func scanUser(row *sql.Row) (User, error) {
 	u.CanSendMessage = canSendMessage != 0
 	u.CanSendFile = canSendFile != 0
 	u.CanCreateGroup = canCreateGroup != 0
+	u.Dnd = dnd != 0
 	u.LastSeenAt = unixMilliTime(lastSeenAt)
 	u.CreatedAt = unixMilliTime(createdAt)
 	return u, nil
@@ -176,6 +190,52 @@ func (db *DB) UpdateNickname(userID, nickname string) (User, error) {
 	return db.UserByID(userID)
 }
 
+func (db *DB) UpdateProfile(userID string, nickname, signature, pendant *string, dnd *bool) (User, error) {
+	current, err := db.UserByID(userID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return User{}, fmt.Errorf("用户不存在")
+		}
+		return User{}, err
+	}
+	nick := current.Nickname
+	if nickname != nil {
+		nick, err = normalizeNickname(*nickname)
+		if err != nil {
+			return User{}, err
+		}
+	}
+	sig := current.Signature
+	if signature != nil {
+		sig, err = normalizeSignature(*signature)
+		if err != nil {
+			return User{}, err
+		}
+	}
+	pen := current.Pendant
+	if pendant != nil {
+		pen, err = normalizePendant(*pendant)
+		if err != nil {
+			return User{}, err
+		}
+	}
+	quiet := current.Dnd
+	if dnd != nil {
+		quiet = *dnd
+	}
+	err = db.withLockRetry(func() error {
+		_, execErr := db.sql.Exec(
+			`UPDATE users SET nickname = ?, signature = ?, pendant = ?, dnd = ? WHERE id = ?`,
+			nick, sig, pen, boolToInt(quiet), userID,
+		)
+		return execErr
+	})
+	if err != nil {
+		return User{}, err
+	}
+	return db.UserByID(userID)
+}
+
 func normalizeNickname(raw string) (string, error) {
 	nick := strings.TrimSpace(raw)
 	if strings.Contains(nick, "\n") || strings.Contains(nick, "\r") {
@@ -186,6 +246,26 @@ func normalizeNickname(raw string) (string, error) {
 		return "", fmt.Errorf("昵称长度须为 1–32 个字")
 	}
 	return nick, nil
+}
+
+func normalizeSignature(raw string) (string, error) {
+	text := strings.TrimSpace(raw)
+	if strings.Contains(text, "\n") || strings.Contains(text, "\r") {
+		return "", fmt.Errorf("个性签名不能包含换行")
+	}
+	if utf8.RuneCountInString(text) > 60 {
+		return "", fmt.Errorf("个性签名最长 60 个字")
+	}
+	return text, nil
+}
+
+func normalizePendant(raw string) (string, error) {
+	switch strings.TrimSpace(raw) {
+	case "", "ring", "star", "leaf", "crown":
+		return strings.TrimSpace(raw), nil
+	default:
+		return "", fmt.Errorf("不支持的头像挂件")
+	}
 }
 
 func isUniqueConstraint(err error) bool {

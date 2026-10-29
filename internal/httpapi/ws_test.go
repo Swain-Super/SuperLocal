@@ -203,6 +203,31 @@ func TestWSMessagePresenceAndKick(t *testing.T) {
 	}
 }
 
+func TestWSPing(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	db := openHTTPDB(t)
+	srv := httptest.NewServer(httpapi.New(httpapi.Deps{
+		DB:        db,
+		Hub:       hub.New(),
+		DataDir:   t.TempDir(),
+		MaxUpload: 1024 * 1024,
+		Limiter:   auth.NewLimiter(),
+		Now:       func() time.Time { return now },
+	}))
+	t.Cleanup(srv.Close)
+
+	jia := loginClient(t, srv.URL, "ws-ping-jia", "甲")
+	conn := dialWS(t, srv.URL, jia.client)
+	t.Cleanup(func() { _ = conn.Close(websocket.StatusNormalClosure, "") })
+
+	payload, _ := json.Marshal(map[string]any{"type": "ping", "n": 42})
+	writeWS(t, conn, payload)
+	pong := readWSType(t, conn, "pong", 3*time.Second)
+	if pong["n"] != float64(42) {
+		t.Fatalf("pong n = %#v", pong["n"])
+	}
+}
+
 func dialWS(t *testing.T, base string, c *http.Client) *websocket.Conn {
 	t.Helper()
 	wsURL := "ws" + strings.TrimPrefix(base, "http") + "/api/ws"
