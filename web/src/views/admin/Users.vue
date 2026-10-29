@@ -21,7 +21,8 @@ const savingIds = ref(new Set<string>())
 
 const headerCellStyle = {
   color: '#646A73',
-  fontWeight: 400,
+  fontWeight: 500,
+  background: '#F7F8FA',
 }
 
 let request = 0
@@ -117,9 +118,9 @@ onMounted(() => {
 
 <template>
   <section>
-    <h1 class="text-body font-medium">用户</h1>
-    <div class="mt-4 flex items-center gap-2">
-      <div class="w-60">
+    <div class="page-head">
+      <h1 class="page-title">用户</h1>
+      <div class="filters">
         <el-input
           v-model="keyword"
           clearable
@@ -127,13 +128,13 @@ onMounted(() => {
           @keyup.enter="load"
           @clear="load"
         />
+        <el-button type="primary" @click="load">搜索</el-button>
       </div>
-      <el-button type="primary" @click="load">搜索</el-button>
     </div>
-    <p v-if="error" class="mt-3 text-aux text-text">{{ error }}</p>
-    <p v-if="loading" class="mt-3 text-aux text-secondary">加载中</p>
+    <p v-if="error" class="hint">{{ error }}</p>
+    <p v-if="loading" class="hint">加载中</p>
+    <div class="page-card">
     <el-table
-      class="mt-3"
       :data="users"
       size="small"
       :header-cell-style="headerCellStyle"
@@ -194,5 +195,19 @@ onMounted(() => {
         </template>
       </el-table-column>
     </el-table>
+    </div>
   </section>
 </template>
+
+<style scoped>
+.filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 280px;
+}
+.hint {
+  margin: 12px 0 0;
+  font-size: 12px;
+}
+</style>

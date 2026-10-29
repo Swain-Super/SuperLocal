@@ -19,7 +19,8 @@ const dissolvingId = ref('')
 
 const headerCellStyle = {
   color: '#646A73',
-  fontWeight: 400,
+  fontWeight: 500,
+  background: '#F7F8FA',
 }
 
 function asGroup(row: unknown): AdminGroup {
@@ -82,11 +83,11 @@ onMounted(() => {
 
 <template>
   <section>
-    <h1 class="text-body font-medium">群</h1>
-    <p v-if="error" class="mt-3 text-aux text-text">{{ error }}</p>
-    <p v-if="loading" class="mt-3 text-aux text-secondary">加载中</p>
+    <h1 class="page-title">群</h1>
+    <p v-if="error" class="hint">{{ error }}</p>
+    <p v-if="loading" class="hint">加载中</p>
+    <div class="page-card">
     <el-table
-      class="mt-4"
       :data="groups"
       size="small"
       :header-cell-style="headerCellStyle"
@@ -112,5 +113,13 @@ onMounted(() => {
         </template>
       </el-table-column>
     </el-table>
+    </div>
   </section>
 </template>
+
+<style scoped>
+.hint {
+  margin: 12px 0 0;
+  font-size: 12px;
+}
+</style>

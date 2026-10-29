@@ -76,35 +76,50 @@ onMounted(() => {
 
 <template>
   <section>
-    <h1 class="text-body font-medium">概览</h1>
-    <div class="mt-4 grid grid-cols-5 gap-3">
-      <article
-        v-for="card in cards"
-        :key="card.label"
-        class="rounded-panel bg-page px-4 py-3"
-      >
-        <p class="text-aux text-secondary">{{ card.label }}</p>
-        <p class="mt-2 text-body font-medium">{{ card.value }}</p>
+    <h1 class="page-title">概览</h1>
+    <div class="stat-grid">
+      <article v-for="card in cards" :key="card.label" class="stat">
+        <p>{{ card.label }}</p>
+        <strong>{{ card.value }}</strong>
       </article>
     </div>
-    <p v-if="statsError" class="mt-3 text-aux text-text">{{ statsError }}</p>
+    <p v-if="statsError" class="hint">{{ statsError }}</p>
 
-    <h2 class="mt-8 text-body font-medium">修改密码</h2>
-    <form class="mt-4 max-w-sm" @submit.prevent="onPassword">
-      <label class="block text-aux text-secondary" for="admin-new-password">新密码</label>
+    <form class="subcard" @submit.prevent="onPassword">
+      <h2>修改密码</h2>
+      <label for="admin-new-password">新密码</label>
       <el-input
         id="admin-new-password"
         v-model="password"
-        class="mt-1"
         type="password"
         show-password
         autocomplete="new-password"
       />
-      <el-button class="mt-3" type="primary" native-type="submit" :disabled="submitting">
+      <el-button class="save" type="primary" native-type="submit" :disabled="submitting">
         保存
       </el-button>
+      <p v-if="passwordError" class="hint">{{ passwordError }}</p>
+      <p v-if="passwordOk" class="ok">已修改</p>
     </form>
-    <p v-if="passwordError" class="text-aux text-text">{{ passwordError }}</p>
-    <p v-if="passwordOk" class="text-aux text-online">已修改</p>
   </section>
 </template>
+
+<style scoped>
+label {
+  display: block;
+  margin-bottom: 6px;
+  color: #646a73;
+  font-size: 12px;
+}
+.save {
+  margin-top: 12px;
+}
+.hint,
+.ok {
+  margin: 8px 0 0;
+  font-size: 12px;
+}
+.ok {
+  color: #22a06b;
+}
+</style>

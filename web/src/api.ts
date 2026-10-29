@@ -1,8 +1,40 @@
 import axios from 'axios'
 
+const sessionKey = 'sl_session'
+
+export function loadSessionToken(): string {
+  return sessionStorage.getItem(sessionKey) ?? ''
+}
+
+export function saveSessionToken(token: string) {
+  sessionStorage.setItem(sessionKey, token)
+}
+
+export function clearSessionToken() {
+  sessionStorage.removeItem(sessionKey)
+}
+
+export function withSession(url: string): string {
+  const token = loadSessionToken()
+  if (!url || !token) {
+    return url
+  }
+  const joiner = url.includes('?') ? '&' : '?'
+  return `${url}${joiner}token=${encodeURIComponent(token)}`
+}
+
 const http = axios.create({
   baseURL: '',
   withCredentials: true,
+})
+
+http.interceptors.request.use((config) => {
+  config.headers['X-Superlocal-Tab'] = '1'
+  const token = loadSessionToken()
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`
+  }
+  return config
 })
 
 const keyPattern = /^[A-Za-z0-9_-]{8,64}$/
@@ -34,6 +66,10 @@ export function apiErrorMessage(err: unknown): string {
 
 export async function login(key: string, nickname: string) {
   const response = await http.post('/api/session', { key, nickname })
+  const token = response.data?.token
+  if (typeof token === 'string' && token !== '') {
+    saveSessionToken(token)
+  }
   return response.data
 }
 
@@ -42,16 +78,29 @@ export type Me = {
   key: string
   nickname: string
   avatarUrl: string
+  signature: string
+  pendant: string
+  ip: string
   canSendMessage: boolean
   canSendFile: boolean
   canCreateGroup: boolean
+  dnd: boolean
 }
 
 export type PublicUser = {
   id: string
   nickname: string
   avatarUrl: string
+  signature: string
+  pendant: string
   online: boolean
+  dnd: boolean
+}
+
+export type FriendList = {
+  friends: PublicUser[]
+  incoming: PublicUser[]
+  outgoing: string[]
 }
 
 export type Conversation = {
@@ -64,6 +113,23 @@ export type Conversation = {
   unread: number
   lastBody: string
   lastAt: string
+  pinned: boolean
+  muted: boolean
+}
+
+export type ReplyView = {
+  id: string
+  senderNickname: string
+  kind: string
+  body: string
+  fileName?: string
+  recalled: boolean
+}
+
+export type ReactionView = {
+  emoji: string
+  count: number
+  self: boolean
 }
 
 export type ChatMessage = {
@@ -78,6 +144,10 @@ export type ChatMessage = {
   fileSize: number
   mime: string
   createdAt: string
+  replyToId?: string
+  reply?: ReplyView
+  recalled: boolean
+  reactions?: ReactionView[]
 }
 
 export type UploadedFile = {
@@ -101,7 +171,11 @@ export async function me(): Promise<Me> {
 }
 
 export async function logout() {
-  await http.post('/api/logout')
+  try {
+    await http.post('/api/logout')
+  } finally {
+    clearSessionToken()
+  }
 }
 
 export async function onlineUsers(): Promise<PublicUser[]> {
@@ -133,8 +207,26 @@ export async function addMembers(id: string, memberIds: string[]) {
   await http.post(`/api/groups/${encodeURIComponent(id)}/members`, { memberIds })
 }
 
+export async function removeMember(id: string, userId: string) {
+  await http.delete(`/api/groups/${encodeURIComponent(id)}/members/${encodeURIComponent(userId)}`)
+}
+
 export async function leave(id: string) {
   await http.post(`/api/groups/${encodeURIComponent(id)}/leave`)
+}
+
+export async function conversationMembers(id: string): Promise<PublicUser[]> {
+  const response = await http.get<PublicUser[]>(
+    `/api/conversations/${encodeURIComponent(id)}/members`,
+  )
+  return response.data ?? []
+}
+
+export async function setConversationFlags(
+  id: string,
+  flags: { pinned?: boolean, muted?: boolean },
+) {
+  await http.patch(`/api/conversations/${encodeURIComponent(id)}`, flags)
 }
 
 export async function messages(id: string, after?: string): Promise<ChatMessage[]> {
@@ -156,9 +248,32 @@ export async function upload(file: File): Promise<UploadedFile> {
   return response.data
 }
 
-export async function patchMe(nickname: string): Promise<Me> {
-  const response = await http.patch<Me>('/api/me', { nickname })
+export async function patchMe(body: { nickname?: string, signature?: string, pendant?: string, dnd?: boolean }): Promise<Me> {
+  const response = await http.patch<Me>('/api/me', body)
   return response.data
+}
+
+function friendPayload(data: FriendList | undefined): FriendList {
+  return {
+    friends: data?.friends ?? [],
+    incoming: data?.incoming ?? [],
+    outgoing: data?.outgoing ?? [],
+  }
+}
+
+export async function friendList(): Promise<FriendList> {
+  const response = await http.get<FriendList>('/api/friends')
+  return friendPayload(response.data)
+}
+
+export async function requestFriend(userId: string): Promise<FriendList> {
+  const response = await http.post<FriendList>('/api/friends', { userId })
+  return friendPayload(response.data)
+}
+
+export async function removeFriend(userId: string): Promise<FriendList> {
+  const response = await http.delete<FriendList>(`/api/friends/${encodeURIComponent(userId)}`)
+  return friendPayload(response.data)
 }
 
 export async function uploadAvatar(file: File): Promise<Me> {
