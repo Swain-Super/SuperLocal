@@ -75,6 +75,63 @@ function onStartCall(kind: 'audio' | 'video') {
   }
   void startCall(store.active.id, kind, store.active.title, store.callsEnabled)
 }
+const callConv = computed(() => {
+  const id = call.conversationId
+  if (!id) {
+    return store.active
+  }
+  if (store.active?.id === id) {
+    return store.active
+  }
+  return store.conversations.find((item) => item.id === id) ?? null
+})
+const callTitle = computed(() => call.peerName || callConv.value?.title || store.active?.title || '')
+const callAvatarUrl = computed(() => {
+  const peer = callConv.value?.peer
+  return peer?.avatarUrl ? withSession(peer.avatarUrl) : ''
+})
+const callRinging = computed(() => call.phase === 'outgoing' || call.phase === 'incoming' || call.phase === 'connecting')
+const showRemoteVideo = computed(() => call.kind === 'video' && call.phase === 'active' && !!remoteStream.value && remoteCameraOn.value)
+const showLocalVideo = computed(() => call.kind === 'video' && call.cameraOn && !!localStream.value && (call.phase === 'outgoing' || call.phase === 'connecting' || call.phase === 'active'))
+function formatCallClock(total: number): string {
+  const minutes = Math.floor(total / 60)
+  const seconds = total % 60
+  return `${minutes}:${String(seconds).padStart(2, '0')}`
+}
+function callStatusText(): string {
+  if (call.phase === 'outgoing') {
+    return '正在呼叫'
+  }
+  if (call.phase === 'incoming') {
+    return call.kind === 'video' ? '邀请你视频通话' : '邀请你语音通话'
+  }
+  if (call.phase === 'connecting') {
+    return '正在连接'
+  }
+  if (call.phase === 'active') {
+    const clock = formatCallClock(callSeconds.value)
+    if (call.kind === 'video' && !remoteCameraOn.value) {
+      return `${clock} · 对方已关闭摄像头`
+    }
+    return clock
+  }
+  if (call.reason === 'busy') {
+    return '对方忙线'
+  }
+  if (call.reason === 'timeout') {
+    return '对方未接听'
+  }
+  if (call.reason === 'offline') {
+    return '对方离线'
+  }
+  if (call.reason === 'reject') {
+    return '对方已拒绝'
+  }
+  if (call.reason === 'forbidden') {
+    return '无法呼叫'
+  }
+  return call.reason || '通话已结束'
+}
 
 const latencyText = computed(() => {
   if (!store.connected) {
@@ -109,10 +166,23 @@ const pane = ref<'messages' | 'contacts'>('messages')
 const keyword = ref('')
 const showThread = ref(false)
 const narrow = ref(false)
+const callSeconds = ref(0)
+let callClockTimer = 0
 watch(() => call.phase, (phase) => {
   if (phase !== 'idle') {
     showThread.value = true
   }
+  window.clearInterval(callClockTimer)
+  callClockTimer = 0
+  if (phase === 'active') {
+    callSeconds.value = 0
+    callClockTimer = window.setInterval(() => {
+      callSeconds.value += 1
+    }, 1000)
+  }
+})
+onUnmounted(() => {
+  window.clearInterval(callClockTimer)
 })
 const draft = ref('')
 const composing = ref(false)
@@ -2265,19 +2335,56 @@ onUnmounted(() => {
           <span v-if="!(narrow && !showThread)" class="latency" :class="latencyLevel" :title="`网络延迟 ${latencyText}`">{{ latencyText }}</span>
         </header>
         <div v-if="call.phase !== 'idle'" class="call-layer">
-          <p class="call-name">{{ call.peerName || store.active?.title }}</p>
-          <p v-if="call.phase === 'outgoing'" class="call-reason">正在呼叫</p>
-          <p v-if="call.phase === 'failed'" class="call-reason">{{ call.reason === 'busy' ? '对方忙线' : call.reason === 'timeout' ? '对方未接听' : call.reason === 'offline' ? '对方离线' : call.reason }}</p>
-          <video v-if="call.kind === 'video' && call.phase === 'active' && remoteStream && remoteCameraOn" :ref="bindRemoteVideo" class="call-remote" autoplay playsinline></video>
-          <p v-if="call.kind === 'video' && call.phase === 'active' && remoteStream && !remoteCameraOn" class="call-reason">{{ call.peerName || store.active?.title }}</p>
-          <video v-if="call.kind === 'video' && call.cameraOn && localStream" :ref="bindLocalVideo" class="call-local" autoplay playsinline muted></video>
+          <video v-if="showRemoteVideo" :ref="bindRemoteVideo" class="call-remote" autoplay playsinline></video>
+          <div v-if="showRemoteVideo" class="call-top">
+            <p class="call-name">{{ callTitle }}</p>
+            <p class="call-reason">{{ callStatusText() }}</p>
+          </div>
+          <div v-else class="call-hero">
+            <span class="call-avatar" :class="{ pulse: callRinging }">
+              <span class="call-avatar-face">
+                <img v-if="callAvatarUrl" :src="callAvatarUrl" alt="" />
+                <template v-else>{{ initial(callTitle) }}</template>
+              </span>
+            </span>
+            <p class="call-name">{{ callTitle }}</p>
+            <p class="call-reason">{{ callStatusText() }}</p>
+          </div>
+          <video v-if="showLocalVideo" :ref="bindLocalVideo" class="call-local" autoplay playsinline muted></video>
           <div class="call-actions">
-            <button v-if="call.phase === 'incoming'" type="button" class="head-btn" @click="acceptCall">接听</button>
-            <button v-if="call.phase === 'incoming'" type="button" class="head-btn danger" @click="rejectCall">拒绝</button>
-            <button v-if="call.phase === 'active'" type="button" class="head-btn" @click="toggleCallMute">{{ call.muted ? '取消静音' : '静音' }}</button>
-            <button v-if="call.phase === 'active' && call.kind === 'video'" type="button" class="head-btn" @click="toggleCamera">{{ call.cameraOn ? '关闭摄像头' : '打开摄像头' }}</button>
-            <button v-if="call.phase === 'outgoing' || call.phase === 'connecting' || call.phase === 'active'" type="button" class="head-btn danger" @click="hangupCall">挂断</button>
-            <button v-if="call.phase === 'failed'" type="button" class="head-btn" @click="dismissCall">知道了</button>
+            <button v-if="call.phase === 'incoming'" type="button" class="call-key hangup" @click="rejectCall">
+              <span class="call-key-face">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.2 3.8h2.2l1.1 2.7-1.6 1a11 11 0 0 0 5.4 5.4l1-1.6 2.7 1.1v2.2a1.8 1.8 0 0 1-1.6 1.8 12.2 12.2 0 0 1-11.2-11.2 1.8 1.8 0 0 1 1.8-1.6z"/></svg>
+              </span>
+              <span class="call-key-label">拒绝</span>
+            </button>
+            <button v-if="call.phase === 'incoming'" type="button" class="call-key accept" @click="acceptCall">
+              <span class="call-key-face">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.2 3.8h2.2l1.1 2.7-1.6 1a11 11 0 0 0 5.4 5.4l1-1.6 2.7 1.1v2.2a1.8 1.8 0 0 1-1.6 1.8 12.2 12.2 0 0 1-11.2-11.2 1.8 1.8 0 0 1 1.8-1.6z"/></svg>
+              </span>
+              <span class="call-key-label">接听</span>
+            </button>
+            <button v-if="call.phase === 'active'" type="button" class="call-key" :class="{ on: call.muted }" @click="toggleCallMute">
+              <span class="call-key-face">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5.2a3 3 0 0 1 6 0V11a3 3 0 0 1-6 0V5.2z"/><path d="M6.5 11a5.5 5.5 0 0 0 11 0M12 16.5V20M9 20h6"/><path v-if="call.muted" d="M5 5l14 14"/></svg>
+              </span>
+              <span class="call-key-label">{{ call.muted ? '取消静音' : '静音' }}</span>
+            </button>
+            <button v-if="call.phase === 'active' && call.kind === 'video'" type="button" class="call-key" :class="{ on: !call.cameraOn }" @click="toggleCamera">
+              <span class="call-key-face">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="7" width="11" height="10" rx="2"/><path d="M14.5 11.2 20 8.2v7.6l-5.5-3"/><path v-if="!call.cameraOn" d="M5 5l14 14"/></svg>
+              </span>
+              <span class="call-key-label">{{ call.cameraOn ? '关闭摄像头' : '打开摄像头' }}</span>
+            </button>
+            <button v-if="call.phase === 'outgoing' || call.phase === 'connecting' || call.phase === 'active'" type="button" class="call-key hangup" @click="hangupCall">
+              <span class="call-key-face">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.2 3.8h2.2l1.1 2.7-1.6 1a11 11 0 0 0 5.4 5.4l1-1.6 2.7 1.1v2.2a1.8 1.8 0 0 1-1.6 1.8 12.2 12.2 0 0 1-11.2-11.2 1.8 1.8 0 0 1 1.8-1.6z"/></svg>
+              </span>
+              <span class="call-key-label">挂断</span>
+            </button>
+            <button v-if="call.phase === 'failed'" type="button" class="call-key accept" @click="dismissCall">
+              <span class="call-key-face call-key-word">知道了</span>
+            </button>
           </div>
         </div>
 
@@ -3635,50 +3742,193 @@ onUnmounted(() => {
 }
 .call-layer {
   position: absolute;
-  z-index: 5;
+  z-index: 8;
   inset: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: flex-end;
+  overflow: hidden;
+  background: #1f2329;
+  color: #fff;
+}
+.call-hero {
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 48px 24px 0;
+}
+.call-avatar {
+  position: relative;
+  width: 96px;
+  height: 96px;
+}
+.call-avatar-face {
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
   justify-content: center;
-  padding: 16px;
-  background: #ffffff;
-  border: 1px solid #e6e8eb;
-  border-radius: 8px;
-  color: #1f2329;
+  background: #0b6bcb;
+  color: #fff;
+  font-size: 36px;
+  font-weight: 600;
+}
+.call-avatar-face img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.call-avatar.pulse::before,
+.call-avatar.pulse::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 2px solid #e7f0fa;
+  border-radius: 50%;
+  animation: call-pulse 1.8s ease-out infinite;
+}
+.call-avatar.pulse::after {
+  animation-delay: 0.7s;
+}
+@keyframes call-pulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.85;
+  }
+  100% {
+    transform: scale(1.45);
+    opacity: 0;
+  }
 }
 .call-name {
   margin: 0;
-  font-size: 16px;
+  font-size: 22px;
   font-weight: 600;
+  line-height: 1.3;
+  color: #fff;
 }
 .call-reason {
-  margin: 8px 0 0;
-  color: #646a73;
-  font-size: 12px;
+  margin: 0;
+  color: #e7f0fa;
+  font-size: 14px;
+}
+.call-top {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 28px 20px 56px;
+  background: linear-gradient(#1f2329, transparent);
 }
 .call-remote {
-  display: block;
-  width: min(640px, 100%);
-  max-height: 60%;
-  margin-top: 12px;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
   background: #1f2329;
-  border-radius: 8px;
 }
 .call-local {
   position: absolute;
-  right: 24px;
-  bottom: 64px;
-  width: 96px;
-  border-radius: 8px;
+  z-index: 2;
+  top: 20px;
+  right: 16px;
+  width: 112px;
+  height: 158px;
+  object-fit: cover;
+  border: 2px solid #fff;
+  border-radius: 12px;
+  background: #1f2329;
+  transform: scaleX(-1);
 }
 .call-actions {
+  position: relative;
+  z-index: 2;
   display: flex;
-  gap: 8px;
-  margin-top: 12px;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 28px;
+  width: 100%;
+  padding: 36px 16px 28px;
+  background: linear-gradient(transparent, #1f2329 42%);
 }
-.call-actions .head-btn:not(.danger) {
-  color: #0b6bcb;
+.call-key {
+  width: 76px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: #fff;
+  font: inherit;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.call-key-face {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f3f5f7;
+  color: #1f2329;
+}
+.call-key-face svg {
+  width: 26px;
+  height: 26px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.call-key.accept .call-key-face,
+.call-key.on .call-key-face {
+  background: #0b6bcb;
+  color: #fff;
+}
+.call-key.hangup .call-key-face {
+  background: #e11d48;
+  color: #fff;
+}
+.call-key.hangup svg {
+  transform: rotate(135deg);
+}
+.call-key-label {
+  font-size: 12px;
+  line-height: 1.2;
+  color: #fff;
+}
+.call-key-word {
+  width: auto;
+  min-width: 96px;
+  height: 44px;
+  padding: 0 18px;
+  border-radius: 22px;
+  font-size: 15px;
+  font-weight: 600;
+}
+.call-key:hover .call-key-face {
+  background: #e7f0fa;
+}
+.call-key.accept:hover .call-key-face,
+.call-key.on:hover .call-key-face {
+  background: #0958a8;
+}
+.call-key.hangup:hover .call-key-face {
+  background: #e11d48;
 }
 .head-btn {
   height: 32px;
@@ -5176,6 +5426,22 @@ button:disabled {
   .members {
     left: 0;
     width: auto;
+  }
+  .call-local {
+    width: 84px;
+    height: 118px;
+    top: 12px;
+    right: 12px;
+  }
+  .call-actions {
+    gap: 16px;
+    padding-bottom: 20px;
+  }
+  .call-avatar,
+  .call-avatar-face {
+    width: 80px;
+    height: 80px;
+    font-size: 30px;
   }
 }
 
