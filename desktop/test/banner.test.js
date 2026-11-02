@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { applyLanUrls, lanUrls, parseBanner, urlsFromBanner } from "../src/banner.js";
 
-const sample = `http://127.0.0.1:9090/
-http://127.0.0.1:9090/admin
-http://192.168.1.8:9090/
-http://192.168.1.8:9090/admin
+const sample = `https://127.0.0.1:9090/
+https://127.0.0.1:9090/admin
+https://192.168.1.8:9090/
+https://192.168.1.8:9090/admin
 账号 admin
 密码 secret
 `;
@@ -13,20 +13,26 @@ http://192.168.1.8:9090/admin
 test("从服务打印的文本取出聊天地址和后台地址", () => {
   const parsed = parseBanner(sample);
   assert.deepEqual(parsed.chatUrls, [
-    "http://127.0.0.1:9090/",
-    "http://192.168.1.8:9090/",
+    "https://127.0.0.1:9090/",
+    "https://192.168.1.8:9090/",
   ]);
   assert.deepEqual(parsed.adminUrls, [
-    "http://127.0.0.1:9090/admin",
-    "http://192.168.1.8:9090/admin",
+    "https://127.0.0.1:9090/admin",
+    "https://192.168.1.8:9090/admin",
   ]);
+});
+
+test("旧的 http 地址仍然能解析", () => {
+  const parsed = parseBanner("http://192.168.1.8:9090/\nhttp://192.168.1.8:9090/admin\n");
+  assert.deepEqual(parsed.chatUrls, ["http://192.168.1.8:9090/"]);
+  assert.deepEqual(parsed.adminUrls, ["http://192.168.1.8:9090/admin"]);
 });
 
 test("页面只展示局域网地址", () => {
   const text = `${sample}http://169.254.95.6:9090/\nhttp://169.254.95.6:9090/admin\n`;
   assert.deepEqual(urlsFromBanner(text, 9090), {
-    chatUrls: ["http://192.168.1.8:9090/"],
-    adminUrls: ["http://192.168.1.8:9090/admin"],
+    chatUrls: ["https://192.168.1.8:9090/"],
+    adminUrls: ["https://192.168.1.8:9090/admin"],
   });
 });
 

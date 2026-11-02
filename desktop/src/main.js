@@ -1,6 +1,7 @@
 import { app, BrowserWindow, Menu, Tray, clipboard, ipcMain, nativeImage, shell } from "electron";
 import { spawn, execFile } from "node:child_process";
 import fs from "node:fs";
+import https from "node:https";
 import path from "node:path";
 import { applyLanUrls, lanUrls, urlsFromBanner } from "./banner.js";
 import { launcherPaths, serviceBinaryPath } from "./paths.js";
@@ -209,13 +210,21 @@ async function stopService() {
   return state;
 }
 
-async function probeHttp(port) {
-  try {
-    await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(1000) });
-    return true;
-  } catch {
-    return false;
-  }
+function probeHttp(port) {
+  return new Promise((resolve) => {
+    const req = https.get(
+      { hostname: "127.0.0.1", port, path: "/", rejectUnauthorized: false, timeout: 1000 },
+      (res) => {
+        res.resume();
+        resolve(true);
+      },
+    );
+    req.on("error", () => resolve(false));
+    req.setTimeout(1000, () => {
+      req.destroy();
+      resolve(false);
+    });
+  });
 }
 
 async function runStart(port) {
@@ -324,7 +333,7 @@ async function runStart(port) {
     clearPid();
     state.status = "failed";
     state.error = explainStartupError(outcome.error);
-    if (stdoutText.includes("http://")) {
+    if (stdoutText.includes("https://")) {
       const urls = urlsFromBanner(stdoutText, port);
       state.chatUrls = urls.chatUrls;
       state.adminUrls = urls.adminUrls;
@@ -384,7 +393,7 @@ function openLocal(kind) {
   if (state.status !== "running") {
     return;
   }
-  const base = `http://127.0.0.1:${state.port}`;
+  const base = `https://127.0.0.1:${state.port}`;
   if (kind === "admin") {
     shell.openExternal(`${base}/admin`);
     return;

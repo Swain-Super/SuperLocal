@@ -6,7 +6,7 @@ export function parseBanner(text) {
   const adminUrls = [];
   for (const line of String(text ?? "").split(/\r?\n/)) {
     const trimmed = line.trim();
-    if (!trimmed.startsWith("http://")) {
+    if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
       continue;
     }
     let url;
@@ -51,12 +51,12 @@ export function lanUrls(port) {
       if (addr.internal || (addr.family !== "IPv4" && addr.family !== 4)) {
         continue;
       }
-      if (!isShareable(`http://${addr.address}/`) || seen.has(addr.address)) {
+      if (!isShareable(`https://${addr.address}/`) || seen.has(addr.address)) {
         continue;
       }
       seen.add(addr.address);
-      chatUrls.push(`http://${addr.address}:${port}/`);
-      adminUrls.push(`http://${addr.address}:${port}/admin`);
+      chatUrls.push(`https://${addr.address}:${port}/`);
+      adminUrls.push(`https://${addr.address}:${port}/admin`);
     }
   }
   return { chatUrls, adminUrls };
