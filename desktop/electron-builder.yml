@@ -2,6 +2,7 @@ appId: com.superlocal.launcher
 productName: SuperLocal
 directories:
   output: release
+afterPack: scripts/adhoc-sign.cjs
 files:
   - dist/**
   - src/**
