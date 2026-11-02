@@ -14,9 +14,18 @@ extraResources:
       - superlocal
       - superlocal.exe
 mac:
+  icon: assets/icon.icns
   identity: null
+  category: public.app-category.social-networking
   target:
     - dmg
+  extendInfo:
+    CFBundleDisplayName: SuperLocal
+    CFBundleName: SuperLocal
+dmg:
+  title: SuperLocal
+  icon: assets/icon.icns
+artifactName: ${productName}-${version}-${arch}.${ext}
 win:
   target:
     - nsis
