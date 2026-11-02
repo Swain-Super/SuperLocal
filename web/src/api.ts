@@ -385,3 +385,8 @@ export async function deleteAdminGroup(id: string) {
 export async function adminPassword(password: string) {
   await http.post('/api/admin/password', { password })
 }
+
+export async function features(): Promise<{ calls: boolean }> {
+  const response = await http.get<{ calls?: boolean }>('/api/features')
+  return { calls: response.data?.calls === true }
+}

@@ -24,6 +24,19 @@ import {
   type RichStyle,
 } from '../rich'
 import {
+  acceptCall,
+  call,
+  dismissCall,
+  hangupCall,
+  localStream,
+  rejectCall,
+  remoteCameraOn,
+  remoteStream,
+  startCall,
+  toggleCamera,
+  toggleMute as toggleCallMute,
+} from '../call'
+import {
   formatBytes,
   formatStamp,
   listPreview,
@@ -45,6 +58,23 @@ function loadCodeApi() {
 
 const store = useChatStore()
 const router = useRouter()
+const canCall = computed(() => store.callsEnabled && window.isSecureContext && store.active?.type === 'direct')
+function bindRemoteVideo(el: unknown) {
+  if (el instanceof HTMLVideoElement && remoteStream.value) {
+    el.srcObject = remoteStream.value
+  }
+}
+function bindLocalVideo(el: unknown) {
+  if (el instanceof HTMLVideoElement && localStream.value) {
+    el.srcObject = localStream.value
+  }
+}
+function onStartCall(kind: 'audio' | 'video') {
+  if (!store.active) {
+    return
+  }
+  void startCall(store.active.id, kind, store.active.title, store.callsEnabled)
+}
 
 const latencyText = computed(() => {
   if (!store.connected) {
@@ -79,6 +109,11 @@ const pane = ref<'messages' | 'contacts'>('messages')
 const keyword = ref('')
 const showThread = ref(false)
 const narrow = ref(false)
+watch(() => call.phase, (phase) => {
+  if (phase !== 'idle') {
+    showThread.value = true
+  }
+})
 const draft = ref('')
 const composing = ref(false)
 const profileOpen = ref(false)
@@ -2212,6 +2247,8 @@ onUnmounted(() => {
               </span>
             </span>
             <span class="head-actions">
+              <button v-if="canCall" type="button" class="head-btn" @click="onStartCall('audio')">语音</button>
+              <button v-if="canCall" type="button" class="head-btn" @click="onStartCall('video')">视频</button>
               <button v-if="store.active.type === 'group'" type="button" class="head-btn" @click="membersOpen = !membersOpen">成员</button>
               <button
                 v-if="isOwner(store.active)"
@@ -2227,6 +2264,22 @@ onUnmounted(() => {
           <button v-if="narrow" type="button" class="head-btn" @click="openProfile">个人资料</button>
           <span v-if="!(narrow && !showThread)" class="latency" :class="latencyLevel" :title="`网络延迟 ${latencyText}`">{{ latencyText }}</span>
         </header>
+        <div v-if="call.phase !== 'idle'" class="call-layer">
+          <p class="call-name">{{ call.peerName || store.active?.title }}</p>
+          <p v-if="call.phase === 'outgoing'" class="call-reason">正在呼叫</p>
+          <p v-if="call.phase === 'failed'" class="call-reason">{{ call.reason === 'busy' ? '对方忙线' : call.reason === 'timeout' ? '对方未接听' : call.reason === 'offline' ? '对方离线' : call.reason }}</p>
+          <video v-if="call.kind === 'video' && call.phase === 'active' && remoteStream && remoteCameraOn" :ref="bindRemoteVideo" class="call-remote" autoplay playsinline></video>
+          <p v-if="call.kind === 'video' && call.phase === 'active' && remoteStream && !remoteCameraOn" class="call-reason">{{ call.peerName || store.active?.title }}</p>
+          <video v-if="call.kind === 'video' && call.cameraOn && localStream" :ref="bindLocalVideo" class="call-local" autoplay playsinline muted></video>
+          <div class="call-actions">
+            <button v-if="call.phase === 'incoming'" type="button" class="head-btn" @click="acceptCall">接听</button>
+            <button v-if="call.phase === 'incoming'" type="button" class="head-btn danger" @click="rejectCall">拒绝</button>
+            <button v-if="call.phase === 'active'" type="button" class="head-btn" @click="toggleCallMute">{{ call.muted ? '取消静音' : '静音' }}</button>
+            <button v-if="call.phase === 'active' && call.kind === 'video'" type="button" class="head-btn" @click="toggleCamera">{{ call.cameraOn ? '关闭摄像头' : '打开摄像头' }}</button>
+            <button v-if="call.phase === 'outgoing' || call.phase === 'connecting' || call.phase === 'active'" type="button" class="head-btn danger" @click="hangupCall">挂断</button>
+            <button v-if="call.phase === 'failed'" type="button" class="head-btn" @click="dismissCall">知道了</button>
+          </div>
+        </div>
 
         <div v-if="store.active?.type === 'group' && store.members.length" class="member-strip">
           <button
@@ -3579,6 +3632,53 @@ onUnmounted(() => {
   align-items: center;
   gap: 4px;
   flex: none;
+}
+.call-layer {
+  position: absolute;
+  z-index: 5;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: #ffffff;
+  border: 1px solid #e6e8eb;
+  border-radius: 8px;
+  color: #1f2329;
+}
+.call-name {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+.call-reason {
+  margin: 8px 0 0;
+  color: #646a73;
+  font-size: 12px;
+}
+.call-remote {
+  display: block;
+  width: min(640px, 100%);
+  max-height: 60%;
+  margin-top: 12px;
+  background: #1f2329;
+  border-radius: 8px;
+}
+.call-local {
+  position: absolute;
+  right: 24px;
+  bottom: 64px;
+  width: 96px;
+  border-radius: 8px;
+}
+.call-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+.call-actions .head-btn:not(.danger) {
+  color: #0b6bcb;
 }
 .head-btn {
   height: 32px;

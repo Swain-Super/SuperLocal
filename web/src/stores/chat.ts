@@ -1,11 +1,13 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { plainText } from '../rich'
+import { bindCallSender, onSignal } from '../call'
 import {
   addMembers as apiAddMembers,
   apiErrorMessage,
   conversations as apiConversations,
   createGroup as apiCreateGroup,
+  features as apiFeatures,
   isImageMime,
   leave as apiLeave,
   logout as apiLogout,
@@ -110,6 +112,7 @@ export const useChatStore = defineStore('chat', () => {
   const notice = ref('')
   const ready = ref(false)
   const avatarNonce = ref(0)
+  const callsEnabled = ref(false)
 
   const active = computed(() => findConv(activeId.value))
   const activeMessages = computed(() => messages.value[activeId.value] ?? [])
@@ -583,6 +586,9 @@ export const useChatStore = defineStore('chat', () => {
         ban()
         break
       default:
+        if (event.type?.startsWith('call.')) {
+          onSignal(event)
+        }
         break
     }
   }
@@ -683,6 +689,14 @@ export const useChatStore = defineStore('chat', () => {
     socket.send(JSON.stringify({ type: 'ping', n }))
   }
 
+  function sendRaw(payload: object) {
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      return
+    }
+    socket.send(JSON.stringify(payload))
+  }
+  bindCallSender(sendRaw)
+
   function notePong(n: number | undefined) {
     if (typeof n !== 'number') {
       return
@@ -722,6 +736,11 @@ export const useChatStore = defineStore('chat', () => {
     banned.value = false
     try {
       me.value = await fetchMe()
+      try {
+        callsEnabled.value = (await apiFeatures()).calls
+      } catch {
+        callsEnabled.value = false
+      }
     } catch (err) {
       started = false
       ready.value = true
@@ -784,6 +803,7 @@ export const useChatStore = defineStore('chat', () => {
     banned,
     notice,
     ready,
+    callsEnabled,
     avatarNonce,
     bootstrap,
     stop,
