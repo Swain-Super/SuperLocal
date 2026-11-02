@@ -11,6 +11,7 @@ type Config struct {
 	Addr      string
 	DataDir   string
 	MaxUpload int64
+	TLS       bool
 }
 
 func FromArgs(args []string) (Config, error) {
@@ -18,6 +19,7 @@ func FromArgs(args []string) (Config, error) {
 	addr := fs.String("addr", ":8080", "listen address")
 	data := fs.String("data", "./data", "data directory")
 	maxUpload := fs.String("max-upload", "200MB", "max upload size")
+	tlsOn := fs.Bool("tls", true, "serve HTTPS")
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
 	}
@@ -25,7 +27,7 @@ func FromArgs(args []string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	return Config{Addr: *addr, DataDir: *data, MaxUpload: n}, nil
+	return Config{Addr: *addr, DataDir: *data, MaxUpload: n, TLS: *tlsOn}, nil
 }
 
 func parseSize(raw string) (int64, error) {

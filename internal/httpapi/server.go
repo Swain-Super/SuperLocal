@@ -16,8 +16,9 @@ type Deps struct {
 	Hub       *hub.Hub
 	DataDir   string
 	MaxUpload int64
-	Limiter   *auth.Limiter
-	Now       func() time.Time
+	Limiter      *auth.Limiter
+	Now          func() time.Time
+	CallsEnabled bool
 }
 
 type server struct {
@@ -25,8 +26,9 @@ type server struct {
 	hub       *hub.Hub
 	dataDir   string
 	maxUpload int64
-	limiter   *auth.Limiter
-	now       func() time.Time
+	limiter      *auth.Limiter
+	now          func() time.Time
+	callsEnabled bool
 }
 
 func New(deps Deps) http.Handler {
@@ -39,8 +41,9 @@ func New(deps Deps) http.Handler {
 		hub:       deps.Hub,
 		dataDir:   deps.DataDir,
 		maxUpload: deps.MaxUpload,
-		limiter:   deps.Limiter,
-		now:       now,
+		limiter:      deps.Limiter,
+		now:          now,
+		callsEnabled: deps.CallsEnabled,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/session", s.handleLogin)
@@ -72,6 +75,7 @@ func New(deps Deps) http.Handler {
 	mux.HandleFunc("GET /api/avatars/{id}", s.handleGetAvatar)
 
 	mux.HandleFunc("GET /api/ws", s.handleWS)
+	mux.HandleFunc("GET /api/features", s.handleFeatures)
 
 	mux.HandleFunc("POST /api/admin/session", s.handleAdminLogin)
 	mux.HandleFunc("POST /api/admin/logout", s.handleAdminLogout)
@@ -82,6 +86,10 @@ func New(deps Deps) http.Handler {
 	mux.HandleFunc("GET /api/admin/groups", s.handleAdminGroups)
 	mux.HandleFunc("DELETE /api/admin/groups/{id}", s.handleAdminDeleteGroup)
 	return mux
+}
+
+func (s *server) handleFeatures(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]bool{"calls": s.callsEnabled})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

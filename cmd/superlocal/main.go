@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"fmt"
 	"log"
 	"net"
@@ -16,6 +17,7 @@ import (
 	"superlocal/internal/httpapi"
 	"superlocal/internal/hub"
 	"superlocal/internal/store"
+	"superlocal/internal/tlscert"
 )
 
 func main() {
@@ -47,32 +49,56 @@ func main() {
 		}
 	}()
 
-	fmt.Print(banner(cfg.Addr, username, password, lanIPv4()))
+	hosts := lanIPv4()
+	if cfg.TLS {
+		if _, err := tlscert.LoadOrCreate(cfg.DataDir, hosts, time.Now()); err != nil {
+			log.Fatalf("证书写入失败: %v", err)
+		}
+	}
+	fmt.Print(banner(cfg.Addr, username, password, hosts, cfg.TLS))
 	handler := httpapi.WithStatic(httpapi.New(httpapi.Deps{
-		DB:        db,
-		Hub:       hub.New(),
-		DataDir:   cfg.DataDir,
-		MaxUpload: cfg.MaxUpload,
-		Limiter:   auth.NewLimiter(),
+		DB:           db,
+		Hub:          hub.New(),
+		DataDir:      cfg.DataDir,
+		MaxUpload:    cfg.MaxUpload,
+		Limiter:      auth.NewLimiter(),
+		CallsEnabled: cfg.TLS,
 	}))
-	err = http.ListenAndServe(cfg.Addr, handler)
+	var serveErr error
+	if cfg.TLS {
+		cert, err := tlscert.LoadOrCreate(cfg.DataDir, hosts, time.Now())
+		if err != nil {
+			log.Fatalf("证书写入失败: %v", err)
+		}
+		ln, err := tls.Listen("tcp", cfg.Addr, &tls.Config{Certificates: []tls.Certificate{cert}})
+		if err != nil {
+			log.Fatal(err)
+		}
+		serveErr = http.Serve(ln, handler)
+	} else {
+		serveErr = http.ListenAndServe(cfg.Addr, handler)
+	}
 	ticker.Stop()
 	_ = db.SQL().Close()
-	log.Fatal(err)
+	log.Fatal(serveErr)
 }
 
 // banner 列出回环地址和传入的局域网 IPv4 上的聊天页、管理页，以及管理员账号和密码。
 // port 是监听地址，例如 :8080。本函数不绑定端口。
-func banner(port, username, password string, addrs []string) string {
+func banner(port, username, password string, addrs []string, secure bool) string {
 	p := listenPort(port)
 	hosts := make([]string, 0, 1+len(addrs))
 	hosts = append(hosts, "127.0.0.1")
 	hosts = append(hosts, addrs...)
+	scheme := "http"
+	if secure {
+		scheme = "https"
+	}
 
 	var b strings.Builder
 	for _, host := range hosts {
-		fmt.Fprintf(&b, "http://%s:%s/\n", host, p)
-		fmt.Fprintf(&b, "http://%s:%s/admin\n", host, p)
+		fmt.Fprintf(&b, "%s://%s:%s/\n", scheme, host, p)
+		fmt.Fprintf(&b, "%s://%s:%s/admin\n", scheme, host, p)
 	}
 	fmt.Fprintf(&b, "账号 %s\n密码 %s\n", username, password)
 	return b.String()

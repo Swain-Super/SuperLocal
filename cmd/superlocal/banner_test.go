@@ -6,12 +6,12 @@ import (
 )
 
 func TestBanner(t *testing.T) {
-	got := banner(":8080", "admin", "secret", []string{"192.168.1.8"})
+	got := banner(":8080", "admin", "secret", []string{"192.168.1.8"}, true)
 	for _, want := range []string{
-		"http://127.0.0.1:8080/",
-		"http://127.0.0.1:8080/admin",
-		"http://192.168.1.8:8080/",
-		"http://192.168.1.8:8080/admin",
+		"https://127.0.0.1:8080/",
+		"https://127.0.0.1:8080/admin",
+		"https://192.168.1.8:8080/",
+		"https://192.168.1.8:8080/admin",
 		"admin",
 		"secret",
 	} {

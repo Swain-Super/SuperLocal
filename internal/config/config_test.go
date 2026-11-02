@@ -7,8 +7,18 @@ func TestFromArgsDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Addr != ":8080" || cfg.DataDir != "./data" || cfg.MaxUpload != 200*1024*1024 {
+	if cfg.Addr != ":8080" || cfg.DataDir != "./data" || cfg.MaxUpload != 200*1024*1024 || !cfg.TLS {
 		t.Fatalf("%+v", cfg)
+	}
+}
+
+func TestFromArgsTLSOff(t *testing.T) {
+	cfg, err := FromArgs([]string{"-tls=false"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.TLS {
+		t.Fatal("tls still on")
 	}
 }
 
