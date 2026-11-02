@@ -193,6 +193,14 @@ function sameStyle(a: RichStyle, b: RichStyle): boolean {
     && a.list === b.list
 }
 
+export function fenceLanguage(lang: string): string {
+  const name = lang.trim()
+  if (name.length === 0 || name.length > 48 || /[`\r\n]/.test(name)) {
+    return ''
+  }
+  return name
+}
+
 function serializeChildren(parent: Node): string {
   let out = ''
   for (const node of parent.childNodes) {
@@ -218,11 +226,17 @@ function serializeNode(node: Node): string {
     return serializeList(node)
   }
   if (node.classList.contains('draft-code')) {
+    const field = node.querySelector('.draft-lang-value')
     const select = node.querySelector('select')
-    const lang = select instanceof HTMLSelectElement ? select.value : ''
+    const raw = field instanceof HTMLInputElement
+      ? field.value
+      : select instanceof HTMLSelectElement
+        ? select.value
+        : ''
+    const lang = fenceLanguage(raw)
     const code = node.querySelector('.draft-code-body')
-    const body = code instanceof HTMLElement ? code.innerText : ''
-    const fence = /^[\w#+.-]{1,32}$/.test(lang) ? `\`\`\`${lang}` : '```'
+    const body = code instanceof HTMLElement ? (code.textContent ?? '') : ''
+    const fence = lang ? `\`\`\`${lang}` : '```'
     return `\n${fence}\n${body.replace(/\n$/, '')}\n\`\`\`\n`
   }
   if (node.tagName === 'BLOCKQUOTE') {

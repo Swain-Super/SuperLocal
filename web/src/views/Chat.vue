@@ -14,6 +14,7 @@ import {
   fontStacks,
   isShake,
   plainText,
+  fenceLanguage,
   richBlocks,
   richColors,
   richFonts,
@@ -29,6 +30,18 @@ import {
   runeCount,
   useChatStore,
 } from '../stores/chat'
+
+type CodeApi = typeof import('../codeEditor')
+let codeMod: CodeApi | null = null
+let codeModLoad: Promise<CodeApi> | null = null
+
+function loadCodeApi() {
+  codeModLoad ??= import('../codeEditor').then((mod) => {
+    codeMod = mod
+    return mod
+  })
+  return codeModLoad
+}
 
 const store = useChatStore()
 const router = useRouter()
@@ -119,7 +132,7 @@ const membersOpen = ref(false)
 const memberMenu = ref<{ x: number, y: number, id: string } | null>(null)
 const fontPx = ref(14)
 const storedComposerHeight = Number(localStorage.getItem('sl_composer_h') || '')
-const composerHeight = ref(storedComposerHeight >= 96 && storedComposerHeight <= 720 ? storedComposerHeight : 0)
+const composerHeight = ref(storedComposerHeight >= 112 && storedComposerHeight <= 168 ? storedComposerHeight : 0)
 const colorOpen = ref(false)
 const markOpen = ref(false)
 const fmtState = ref({ bold: false, italic: false, underline: false, strike: false, align: 'left' })
@@ -232,12 +245,12 @@ function messageBlocks(body: string): Array<TextBlock | CodeBlock> {
       blocks.push({ type: 'text', text: body.slice(last, index) })
     }
     const rawLang = (match[1] ?? '').trim()
-    const langOk = rawLang === '' || /^[\w#+.-]{1,32}$/.test(rawLang)
+    const lang = fenceLanguage(rawLang)
     const codeText = (match[2] ?? '').replace(/\n$/, '')
     blocks.push({
       type: 'code',
-      lang: langOk ? rawLang : '',
-      text: langOk || rawLang === '' ? codeText : `${rawLang}\n${codeText}`,
+      lang,
+      text: lang !== '' || rawLang === '' ? codeText : `${rawLang}\n${codeText}`,
     })
     last = index + match[0].length
   }
@@ -541,9 +554,15 @@ function syncEditor() {
   if (!el) {
     return
   }
-  refreshCodeGutters()
+  codeMod?.releaseCodeEditors(el)
   draft.value = serializeEditor(el)
   editorEmpty.value = plainText(draft.value).trim() === ''
+  const anchor = window.getSelection()?.anchorNode
+  const anchorEl = anchor instanceof Element ? anchor : anchor?.parentElement
+  if (anchorEl?.closest('.draft-code')) {
+    mentionOpen.value = false
+    return
+  }
   const before = textBeforeCaret(el)
   if (store.active?.type !== 'group') {
     mentionOpen.value = false
@@ -571,8 +590,9 @@ function textBeforeCaret(root: HTMLElement): string {
 
 function saveRange() {
   const selection = window.getSelection()
-  if (!selection || selection.rangeCount === 0 || !composer.value?.contains(selection.anchorNode)) {
-    savedRange = null
+  const anchor = selection?.anchorNode
+  const anchorEl = anchor instanceof Element ? anchor : anchor?.parentElement
+  if (!selection || selection.rangeCount === 0 || !composer.value?.contains(anchor ?? null) || anchorEl?.closest('.draft-code')) {
     return
   }
   savedRange = selection.getRangeAt(0).cloneRange()
@@ -738,6 +758,31 @@ function doReact(msg: ChatMessage, emoji: string) {
   store.react(msg.id, emoji)
 }
 
+function placeToolbar(event: MouseEvent) {
+  const msg = event.currentTarget
+  if (!(msg instanceof HTMLElement)) {
+    return
+  }
+  const body = msg.querySelector('.msg-body')
+  const wrap = msg.querySelector('.bubble-wrap')
+  const bar = msg.querySelector('.toolbar')
+  if (!(body instanceof HTMLElement) || !(wrap instanceof HTMLElement) || !(bar instanceof HTMLElement)) {
+    return
+  }
+  const contentWidth = body.getBoundingClientRect().width
+  body.style.width = '9999px'
+  const max = body.getBoundingClientRect().width
+  body.style.width = ''
+  const bodyRect = body.getBoundingClientRect()
+  const row = msg.closest('.msgs')
+  const rowRight = row instanceof HTMLElement ? row.getBoundingClientRect().right : bodyRect.right
+  const barWidth = bar.offsetWidth || 180
+  const atMax = contentWidth >= max - 2
+  const full = atMax || rowRight - bodyRect.right < barWidth + 16
+  msg.classList.toggle('full', full)
+  bar.style.top = full ? '' : `${wrap.offsetTop + wrap.offsetHeight / 2}px`
+}
+
 function toggleMore(id: string) {
   moreId.value = moreId.value === id ? '' : id
 }
@@ -809,9 +854,13 @@ function pickMention(user: PublicUser) {
   syncEditor()
 }
 
-function insertCodeBlock() {
+async function insertCodeBlock() {
   const el = composer.value
   if (!el) {
+    return
+  }
+  const api = await loadCodeApi()
+  if (composer.value !== el) {
     return
   }
   el.focus()
@@ -819,52 +868,31 @@ function insertCodeBlock() {
   const selected = window.getSelection()?.toString() ?? ''
   const card = document.createElement('div')
   card.className = 'draft-code'
-  card.innerHTML = `<div class="draft-code-bar" contenteditable="false"><select class="draft-lang" aria-label="语言"><option value="">无标题</option><option value="Go">Go</option><option value="JavaScript">JavaScript</option><option value="TypeScript">TypeScript</option><option value="Python">Python</option><option value="Java">Java</option><option value="SQL">SQL</option><option value="Shell">Shell</option></select><span class="draft-spacer"></span><button type="button" class="draft-wrap">取消换行</button><button type="button" class="draft-copy">复制</button></div><div class="draft-code-scroll" contenteditable="false"><ol class="draft-gutter"></ol><pre class="draft-code-body" contenteditable="true"></pre></div>`
+  card.contentEditable = 'false'
+  card.innerHTML = `<div class="draft-code-bar"><button type="button" class="draft-wrap">取消换行</button><button type="button" class="draft-copy">复制</button></div><div class="draft-code-host"></div><pre class="draft-code-body" hidden></pre>`
   const body = card.querySelector('.draft-code-body')
-  if (body) {
+  const host = card.querySelector('.draft-code-host')
+  if (body instanceof HTMLElement) {
     body.textContent = selected
   }
   const selection = window.getSelection()
-  if (!selection || selection.rangeCount === 0) {
+  if (!selection || selection.rangeCount === 0 || !el.contains(selection.anchorNode)) {
     el.appendChild(card)
   } else {
     const range = selection.getRangeAt(0)
     range.deleteContents()
     range.insertNode(card)
   }
-  const caret = document.createRange()
-  const target = card.querySelector('.draft-code-body')
-  if (target && selection) {
-    caret.selectNodeContents(target)
-    caret.collapse(false)
-    selection.removeAllRanges()
-    selection.addRange(caret)
+  if (host instanceof HTMLElement && body instanceof HTMLElement) {
+    api.mountCodeEditor(host, selected, '', (text) => {
+      body.textContent = text
+      syncEditor()
+    })
+    api.mountLanguagePicker(card, host, syncEditor)
+    api.focusCodeEditor(host)
   }
   composerExpanded.value = true
-  refreshCodeGutters()
   syncEditor()
-}
-
-function refreshCodeGutters() {
-  const root = composer.value
-  if (!root) {
-    return
-  }
-  for (const card of root.querySelectorAll('.draft-code')) {
-    const body = card.querySelector('.draft-code-body')
-    const gutter = card.querySelector('.draft-gutter')
-    if (!(body instanceof HTMLElement) || !(gutter instanceof HTMLOListElement)) {
-      continue
-    }
-    const count = Math.max(1, body.innerText.replace(/\n$/, '').split('\n').length)
-    if (gutter.childElementCount === count) {
-      continue
-    }
-    gutter.replaceChildren()
-    for (let index = 0; index < count; index += 1) {
-      gutter.appendChild(document.createElement('li'))
-    }
-  }
 }
 
 function onDraftCode(event: MouseEvent) {
@@ -877,16 +905,29 @@ function onDraftCode(event: MouseEvent) {
     return
   }
   const body = card.querySelector('.draft-code-body')
-  if (target.closest('.draft-copy')) {
+  const copy = target.closest('.draft-copy')
+  if (copy instanceof HTMLElement) {
     event.preventDefault()
-    void copyCode(body?.textContent ?? '', 'draft')
+    void copyCode(body?.textContent ?? '', 'draft').then((ok) => {
+      if (!ok || !copy.isConnected) {
+        return
+      }
+      copy.textContent = '已复制'
+      window.setTimeout(() => {
+        if (copy.isConnected) {
+          copy.textContent = '复制'
+        }
+      }, 1500)
+    })
     return
   }
   const wrap = target.closest('.draft-wrap')
-  if (wrap && body instanceof HTMLElement) {
+  const host = card.querySelector('.draft-code-host')
+  if (wrap instanceof HTMLElement && host instanceof HTMLElement) {
     event.preventDefault()
-    const off = body.dataset.wrap !== 'off'
-    body.dataset.wrap = off ? 'off' : 'on'
+    const off = host.dataset.wrap !== 'off'
+    host.dataset.wrap = off ? 'off' : 'on'
+    codeMod?.setCodeWrap(host, !off)
     wrap.textContent = off ? '自动换行' : '取消换行'
   }
 }
@@ -900,8 +941,10 @@ async function copyCode(text: string, key: string) {
         copiedKey.value = ''
       }
     }, 1500)
+    return true
   } catch {
     store.notice = '复制失败'
+    return false
   }
 }
 
@@ -1314,6 +1357,9 @@ async function extractText() {
 }
 
 function onPaste(event: ClipboardEvent) {
+  if (eventTargetElement(event)?.closest('.draft-code')) {
+    return
+  }
   const files = Array.from(event.clipboardData?.items ?? [])
     .filter((item) => item.type.startsWith('image/'))
     .map((item) => item.getAsFile())
@@ -1447,13 +1493,22 @@ function onCompositionEnd() {
   }, 0)
 }
 
+function eventTargetElement(event: Event) {
+  const node = event.target
+  if (node instanceof Element) {
+    return node
+  }
+  if (node instanceof Node) {
+    return node.parentElement
+  }
+  return null
+}
+
 function onComposerKeydown(event: KeyboardEvent) {
-  if (event.key !== 'Enter') {
+  if (eventTargetElement(event)?.closest('.draft-code')) {
     return
   }
-  const anchor = window.getSelection()?.anchorNode
-  const field = anchor instanceof HTMLElement ? anchor : anchor?.parentElement
-  if (field?.closest('.draft-code-body')) {
+  if (event.key !== 'Enter') {
     return
   }
   const ime = event.isComposing || event.keyCode === 229
@@ -1937,6 +1992,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  codeMod?.destroyCodeEditors()
   removeMedia()
   window.removeEventListener('keydown', onWindowKey)
   window.removeEventListener('click', closeFloating)
@@ -2138,7 +2194,7 @@ onUnmounted(() => {
         @drop.stop.prevent="onDropChat"
       >
         <header class="thread-head">
-          <button v-if="narrow && showThread" type="button" class="btn" @click="showThread = false">返回</button>
+          <button v-if="narrow && showThread" type="button" class="head-btn" @click="showThread = false">返回</button>
           <template v-if="store.active">
             <span class="avatar" :class="[store.active.type === 'group' ? 'group' : pendantClass(store.active.peer?.pendant), { 'offline-avatar': peerOffline(store.active) }]">
               <img v-if="store.active.type !== 'group' && store.active.peer?.avatarUrl" :src="withSession(store.active.peer.avatarUrl)" alt="" />
@@ -2155,18 +2211,20 @@ onUnmounted(() => {
                 <template v-else>{{ store.active.peer?.dnd ? '免打扰' : (store.active.peer?.online ? '在线' : '离线') }}<template v-if="store.active.peer?.signature"> · {{ store.active.peer.signature }}</template></template>
               </span>
             </span>
-            <button v-if="store.active.type === 'group'" type="button" class="btn" @click="membersOpen = !membersOpen">成员</button>
-            <button
-              v-if="isOwner(store.active)"
-              type="button"
-              class="btn"
-              @click="openPicker('add')"
-            >
-              添加成员
-            </button>
-            <button v-if="store.active.type === 'group'" type="button" class="btn" @click="onLeave">退出群</button>
+            <span class="head-actions">
+              <button v-if="store.active.type === 'group'" type="button" class="head-btn" @click="membersOpen = !membersOpen">成员</button>
+              <button
+                v-if="isOwner(store.active)"
+                type="button"
+                class="head-btn"
+                @click="openPicker('add')"
+              >
+                添加成员
+              </button>
+              <button v-if="store.active.type === 'group'" type="button" class="head-btn danger" @click="onLeave">退出群</button>
+            </span>
           </template>
-          <button v-if="narrow" type="button" class="btn" @click="openProfile">个人资料</button>
+          <button v-if="narrow" type="button" class="head-btn" @click="openProfile">个人资料</button>
           <span v-if="!(narrow && !showThread)" class="latency" :class="latencyLevel" :title="`网络延迟 ${latencyText}`">{{ latencyText }}</span>
         </header>
 
@@ -2199,6 +2257,7 @@ onUnmounted(() => {
               v-else
               class="msg"
               :class="{ mine: msg.senderId === store.me?.id }"
+              @mouseenter="placeToolbar"
             >
               <span v-if="msg.senderId !== store.me?.id" class="avatar">{{ initial(msg.senderNickname) }}</span>
               <div class="msg-body">
@@ -2905,7 +2964,7 @@ onUnmounted(() => {
   margin: 0;
   padding: 0;
   border: 0;
-  border-radius: 8px;
+  border-radius: 12px;
   background: transparent;
   color: #646a73;
   font: inherit;
@@ -2992,7 +3051,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 12px 12px 4px;
+  padding: 16px 12px 8px;
 }
 .latency {
   flex: none;
@@ -3017,11 +3076,11 @@ onUnmounted(() => {
 .card input {
   box-sizing: border-box;
   width: 100%;
-  height: 32px;
+  height: 36px;
   border: 0;
-  border-radius: 6px;
+  border-radius: 12px;
   background: #f3f5f7;
-  padding: 0 10px;
+  padding: 0 12px;
   color: #1f2329;
   font: inherit;
   outline: none;
@@ -3037,10 +3096,10 @@ onUnmounted(() => {
 }
 .create {
   flex-shrink: 0;
-  margin: 4px 12px 0;
+  margin: 0 12px;
   height: 32px;
   border: 0;
-  border-radius: 6px;
+  border-radius: 10px;
   background: transparent;
   color: #0b6bcb;
   font: inherit;
@@ -3062,6 +3121,9 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
 }
+.scroll {
+  padding: 4px 8px 12px;
+}
 .scroll > .empty,
 .msgs > .empty {
   margin: auto;
@@ -3073,14 +3135,27 @@ onUnmounted(() => {
   box-sizing: border-box;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   border: 0;
-  background: #fff;
+  border-radius: 12px;
+  background: transparent;
   padding: 10px 12px;
   text-align: left;
   cursor: pointer;
   font: inherit;
   color: inherit;
+}
+.row-body {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+}
+.row .name,
+.contact .name {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
 }
 .row:hover,
 .hit:hover {
@@ -3088,7 +3163,6 @@ onUnmounted(() => {
 }
 .row.active {
   background: #e7f0fa;
-  box-shadow: inset 3px 0 0 #0b6bcb;
 }
 .contact-block + .contact-block .contact-head {
   padding-top: 16px;
@@ -3120,8 +3194,9 @@ onUnmounted(() => {
   box-sizing: border-box;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
   cursor: pointer;
 }
 .contact .row-body {
@@ -3177,8 +3252,8 @@ onUnmounted(() => {
 }
 .avatar {
   position: relative;
-  width: 36px;
-  height: 36px;
+  width: 40px;
+  height: 40px;
   flex: none;
   border-radius: 50%;
   background: #e7f0fa;
@@ -3187,7 +3262,8 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   overflow: visible;
-  font-size: 14px;
+  font-size: 15px;
+  font-weight: 600;
 }
 .avatar img {
   width: 100%;
@@ -3196,12 +3272,12 @@ onUnmounted(() => {
   border-radius: 50%;
 }
 .avatar.group {
-  border-radius: 8px;
+  border-radius: 14px;
   background: #0b6bcb;
   color: #fff;
 }
 .avatar.group img {
-  border-radius: 8px;
+  border-radius: 14px;
 }
 .avatar.sm {
   width: 28px;
@@ -3220,7 +3296,7 @@ onUnmounted(() => {
   min-width: 14px;
   height: 14px;
   padding: 0 2px;
-  border-radius: 4px;
+  border-radius: 7px;
   background: #fff;
   color: #0b6bcb;
   border: 1px solid #0b6bcb;
@@ -3239,9 +3315,9 @@ onUnmounted(() => {
 .member-strip {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   flex-shrink: 0;
-  padding: 6px 12px;
+  padding: 0 16px 12px;
   background: #fff;
   border-bottom: 1px solid #e6e8eb;
   overflow: hidden;
@@ -3256,12 +3332,19 @@ onUnmounted(() => {
 }
 .strip-more {
   height: 28px;
+  margin-left: 2px;
+  padding: 0 10px;
   border: 0;
-  background: transparent;
+  border-radius: 14px;
+  background: #f3f5f7;
   color: #646a73;
   font: inherit;
   font-size: 12px;
   cursor: pointer;
+}
+.strip-more:hover {
+  background: #e7f0fa;
+  color: #0b6bcb;
 }
 .members {
   position: absolute;
@@ -3296,16 +3379,22 @@ onUnmounted(() => {
   min-height: 0;
   flex: 1;
   overflow: auto;
+  padding: 8px 0;
+}
+.member-row:hover,
+.person:hover {
+  background: #f7f8fa;
 }
 .member-row,
 .person {
-  width: 100%;
+  width: calc(100% - 16px);
+  margin: 0 8px;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
+  padding: 8px 8px;
   border: 0;
-  border-bottom: 1px solid #e6e8eb;
+  border-radius: 10px;
   background: #fff;
   color: inherit;
   font: inherit;
@@ -3399,7 +3488,7 @@ onUnmounted(() => {
 .who,
 .muted,
 .file-meta {
-  color: #646a73;
+  color: #8a9099;
   font-size: 12px;
 }
 .time {
@@ -3461,14 +3550,18 @@ onUnmounted(() => {
   background: #e7f0fa;
 }
 .thread-head {
-  min-height: 56px;
+  min-height: 64px;
   height: auto;
   flex-shrink: 0;
   flex-wrap: wrap;
-  gap: 8px 10px;
-  padding: 8px 12px;
+  gap: 8px 12px;
+  padding: 12px 16px 10px;
   background: #fff;
   border-bottom: 1px solid #e6e8eb;
+}
+.thread:has(.member-strip) .thread-head {
+  border-bottom: 0;
+  padding-bottom: 8px;
 }
 .thread-title {
   min-width: 0;
@@ -3479,9 +3572,35 @@ onUnmounted(() => {
 .thread-title .name {
   font-size: 16px;
   font-weight: 600;
+  line-height: 1.3;
+}
+.head-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+.head-btn {
+  height: 32px;
+  border: 0;
+  border-radius: 8px;
+  background: #f3f5f7;
+  color: #1f2329;
+  font: inherit;
+  font-size: 13px;
+  padding: 0 10px;
+  cursor: pointer;
+}
+.head-btn:hover {
+  background: #e7f0fa;
+  color: #0b6bcb;
+}
+.head-btn.danger:hover {
+  background: #fff1f2;
+  color: #e11d48;
 }
 .msgs {
-  padding: 40px 20px 8px;
+  padding: 48px 24px 12px;
 }
 .pin {
   flex: none;
@@ -3510,34 +3629,52 @@ onUnmounted(() => {
 .msg {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
+  gap: 10px;
   max-width: 100%;
   min-width: 0;
-  margin-bottom: 16px;
+  margin-bottom: 18px;
 }
 .bubble-wrap {
-  position: relative;
   max-width: 100%;
   min-width: 0;
 }
 .toolbar {
   position: absolute;
-  top: -34px;
-  right: 0;
-  z-index: 2;
+  left: calc(100% + 8px);
+  top: 0;
+  transform: translateY(-50%);
+  z-index: 3;
   display: none;
   align-items: center;
   gap: 2px;
   padding: 2px;
   border: 1px solid #e6e8eb;
-  border-radius: 6px;
+  border-radius: 10px;
   background: #fff;
   box-shadow: 0 4px 12px rgba(31, 35, 41, 0.08);
   white-space: nowrap;
 }
-.mine .toolbar {
-  right: auto;
+.msg.full .toolbar {
+  left: auto;
+  right: 0;
+  top: 0;
+  transform: translateY(calc(-100% - 6px));
+}
+.toolbar::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 100%;
+  width: 10px;
+}
+.msg.full .toolbar::before {
+  top: 100%;
+  right: 0;
+  bottom: auto;
   left: 0;
+  width: auto;
+  height: 20px;
 }
 .msg:hover .toolbar,
 .toolbar:hover {
@@ -3550,7 +3687,7 @@ onUnmounted(() => {
 .conv-menu button {
   height: 28px;
   border: 0;
-  border-radius: 4px;
+  border-radius: 8px;
   background: transparent;
   color: #1f2329;
   font: inherit;
@@ -3574,7 +3711,7 @@ onUnmounted(() => {
   min-width: 88px;
   padding: 4px;
   border: 1px solid #e6e8eb;
-  border-radius: 6px;
+  border-radius: 10px;
   background: #fff;
   box-shadow: 0 8px 24px rgba(31, 35, 41, 0.08);
 }
@@ -3586,7 +3723,7 @@ onUnmounted(() => {
   margin-bottom: 4px;
   padding: 4px 8px;
   border-left: 2px solid #0b6bcb;
-  border-radius: 4px;
+  border-radius: 8px;
   background: rgba(11, 107, 203, 0.08);
   color: #646a73;
   font-size: 12px;
@@ -3606,7 +3743,7 @@ onUnmounted(() => {
   min-width: 0;
   margin: 6px 0;
   border: 1px solid #e6e8eb;
-  border-radius: 6px;
+  border-radius: 12px;
   background: #f7f8fa;
   overflow: hidden;
 }
@@ -3622,7 +3759,8 @@ onUnmounted(() => {
 .code-bar button {
   height: 22px;
   border: 0;
-  border-radius: 4px;
+  border-radius: 8px;
+  padding: 0 8px;
   background: transparent;
   color: #0b6bcb;
   font: inherit;
@@ -3717,9 +3855,9 @@ onUnmounted(() => {
 .mentions,
 .emoji-panel {
   flex-wrap: wrap;
-  padding: 6px;
+  padding: 8px;
   border: 1px solid #e6e8eb;
-  border-radius: 6px;
+  border-radius: 12px;
   background: #fff;
 }
 .conv-menu {
@@ -3730,7 +3868,7 @@ onUnmounted(() => {
   min-width: 120px;
   padding: 4px;
   border: 1px solid #e6e8eb;
-  border-radius: 6px;
+  border-radius: 12px;
   background: #fff;
   box-shadow: 0 8px 24px rgba(31, 35, 41, 0.12);
 }
@@ -3742,17 +3880,13 @@ onUnmounted(() => {
   max-height: 86vh;
   border-radius: 8px;
 }
-.msg.mine {
-  flex-direction: row-reverse;
-}
 .msg-body {
+  position: relative;
   max-width: min(560px, 72%);
   min-width: 0;
   display: flex;
   flex-direction: column;
-}
-.msg.mine .msg-body {
-  align-items: flex-end;
+  align-items: flex-start;
 }
 .who {
   margin: 0 0 4px;
@@ -3761,26 +3895,25 @@ onUnmounted(() => {
   max-width: 100%;
   min-width: 0;
   margin: 0;
-  padding: 8px 12px;
-  box-shadow: 0 1px 2px rgba(31, 35, 41, 0.06);
+  padding: 10px 14px;
   background: #f2f3f5;
   color: #1f2329;
-  border-radius: 2px 8px 8px 8px;
+  border-radius: 8px 18px 18px 18px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   word-break: break-word;
-  line-height: 1.5;
+  line-height: 1.6;
 }
 .mine .bubble {
   background: #0b6bcb;
   color: #fff;
-  border-radius: 8px 2px 8px 8px;
+  border-radius: 8px 18px 18px 18px;
 }
 .photo {
   width: auto;
   height: auto;
   max-width: min(320px, 100%);
-  border-radius: 8px;
+  border-radius: 12px;
 }
 .file {
   display: flex;
@@ -3791,7 +3924,7 @@ onUnmounted(() => {
   min-width: 0;
   box-sizing: border-box;
   padding: 10px 12px;
-  border-radius: 8px;
+  border-radius: 12px;
   background: #fff;
   border: 1px solid #e6e8eb;
   text-decoration: none;
@@ -3811,9 +3944,12 @@ onUnmounted(() => {
   min-width: 0;
   display: flex;
   flex-direction: column;
+  margin: 4px 16px 16px;
+  padding: 0 12px 8px;
   background: #fff;
-  border-top: 1px solid #e6e8eb;
-  padding: 0 12px 12px;
+  border: 1px solid #e6e8eb;
+  border-radius: 16px;
+  box-shadow: 0 8px 24px rgba(31, 35, 41, 0.06);
 }
 .composer-resize {
   flex: none;
@@ -3827,11 +3963,11 @@ onUnmounted(() => {
   position: absolute;
   left: 50%;
   top: 4px;
-  width: 32px;
-  height: 3px;
-  margin-left: -16px;
-  border-radius: 2px;
-  background: #c4c7cc;
+  width: 36px;
+  height: 4px;
+  margin-left: -18px;
+  border-radius: 4px;
+  background: #e6e8eb;
 }
 .composer-resize:hover::before {
   background: #0b6bcb;
@@ -3881,7 +4017,7 @@ onUnmounted(() => {
   margin-bottom: 4px;
   padding: 3px;
   border: 1px solid #e6e8eb;
-  border-radius: 8px;
+  border-radius: 10px;
   background: #f7f8fa;
 }
 .fmt-select {
@@ -3903,7 +4039,7 @@ onUnmounted(() => {
 .format select {
   height: 26px;
   border: 0;
-  border-radius: 4px;
+  border-radius: 8px;
   background: #fff;
   color: #1f2329;
   font: inherit;
@@ -3928,7 +4064,7 @@ onUnmounted(() => {
   width: 26px;
   height: 26px;
   border: 0;
-  border-radius: 4px;
+  border-radius: 8px;
   background: transparent;
   color: #1f2329;
   font: inherit;
@@ -4088,7 +4224,7 @@ ol.rich-list {
 .btn {
   height: 32px;
   border: 0;
-  border-radius: 6px;
+  border-radius: 8px;
   background: transparent;
   color: #646a73;
   font: inherit;
@@ -4124,15 +4260,16 @@ button:disabled {
 }
 .compose-main {
   display: flex;
-  align-items: flex-end;
-  gap: 4px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
   min-width: 0;
 }
 .editor {
   flex: 1;
   min-width: 0;
   width: auto;
-  min-height: 36px;
+  min-height: 72px;
   max-height: 120px;
   overflow-x: hidden;
   overflow-y: auto;
@@ -4150,6 +4287,12 @@ button:disabled {
 .editor:focus {
   background: transparent;
 }
+.editor.empty {
+  padding: 8px 0;
+  color: #1f2329;
+  font-size: inherit;
+  text-align: left;
+}
 .editor.empty:before {
   content: attr(data-placeholder);
   color: #8a9099;
@@ -4164,85 +4307,103 @@ button:disabled {
 .editor a {
   color: #0b6bcb;
 }
-.draft-code {
-  margin: 6px 0;
+:deep(.draft-code) {
+  margin: 8px 0;
   border: 1px solid #e6e8eb;
-  border-radius: 8px;
-  background: #f7f8fa;
+  border-radius: 12px;
+  background: #fff;
   overflow: hidden;
+  box-shadow: 0 1px 2px rgba(31, 35, 41, 0.04);
 }
-.draft-code-bar {
+:deep(.draft-code-bar) {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 32px;
-  padding: 0 8px;
+  min-height: 40px;
+  padding: 6px 8px;
+  background: #f7f8fa;
+  border-bottom: 1px solid #eef0f2;
   color: #646a73;
   font-size: 12px;
 }
-.draft-code-bar select {
-  border: 0;
-  background: transparent;
+:deep(.draft-lang-wrap) {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+:deep(.draft-lang) {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 180px;
+  height: 28px;
+  margin: 0;
+  padding: 0 10px;
+  border: 1px solid #e6e8eb;
+  border-radius: 8px;
+  background: #fff;
   color: #1f2329;
-  font: inherit;
-}
-.draft-spacer {
-  flex: 1;
-}
-.draft-code-bar button {
-  border: 0;
-  background: transparent;
-  color: #646a73;
   font: inherit;
   font-size: 12px;
   cursor: pointer;
-  padding: 0;
 }
-.draft-code-scroll {
-  display: flex;
-  align-items: flex-start;
+:deep(.draft-lang-name) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+:deep(.draft-lang)::after {
+  content: "";
+  width: 0;
+  height: 0;
+  flex: none;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid currentColor;
+}
+:deep(.draft-spacer) {
+  display: none;
+}
+:deep(.draft-code-bar button) {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid #e6e8eb;
+  border-radius: 8px;
   background: #fff;
-  border-top: 1px solid #eef0f2;
-}
-.draft-gutter {
-  margin: 0;
-  padding: 8px 0 8px 12px;
-  min-width: 28px;
-  list-style: decimal;
-  color: #8a919a;
-  font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  user-select: none;
-}
-.draft-gutter li {
-  padding-right: 8px;
-}
-.draft-code-body {
-  flex: 1;
-  min-width: 0;
-  margin: 0;
-  padding: 8px 10px;
-  min-height: 1.6em;
-  font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   color: #1f2329;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  outline: none;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
 }
-.draft-code-body[data-wrap="off"] {
-  white-space: pre;
-  overflow-x: auto;
+:deep(.draft-code-bar button:hover) {
+  border-color: #0b6bcb;
+  color: #0b6bcb;
+}
+:deep(.draft-code-bar .draft-lang[aria-expanded="true"]) {
+  border-color: #0b6bcb;
+  color: #0b6bcb;
+}
+:deep(.draft-code-host) {
+  min-width: 0;
+}
+:deep(.draft-code-body) {
+  display: none;
 }
 .composer-icons {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 2px;
   flex: none;
+  width: 100%;
+  padding-top: 2px;
 }
 .icon-btn {
   width: 32px;
   height: 32px;
   border: 0;
-  border-radius: 6px;
+  border-radius: 10px;
   background: transparent;
   color: #646a73;
   display: inline-flex;
@@ -4280,14 +4441,14 @@ button:disabled {
   min-width: 132px;
   padding: 4px;
   border: 1px solid #e6e8eb;
-  border-radius: 8px;
+  border-radius: 12px;
   background: #fff;
   box-shadow: 0 8px 24px rgba(31, 35, 41, 0.12);
 }
 .pop-menu button {
   height: 32px;
   border: 0;
-  border-radius: 6px;
+  border-radius: 8px;
   background: transparent;
   color: #1f2329;
   font: inherit;
@@ -4320,7 +4481,7 @@ button:disabled {
 }
 .send-icon {
   width: 32px;
-  border-radius: 6px;
+  border-radius: 10px;
 }
 .send-icon svg,
 .send-caret svg {
@@ -4328,7 +4489,11 @@ button:disabled {
   height: 20px;
 }
 .send-icon.ready {
-  color: #0b6bcb;
+  color: #fff;
+  background: #0b6bcb;
+}
+.send-icon.ready:hover:not(:disabled) {
+  background: #0a61b8;
 }
 .send-caret {
   width: 18px;
@@ -4344,7 +4509,7 @@ button:disabled {
   gap: 8px;
   margin: 4px 0;
   padding: 6px 10px;
-  border-radius: 6px;
+  border-radius: 10px;
   background: #e7f0fa;
   color: #0b6bcb;
   font-size: 12px;
@@ -4353,7 +4518,7 @@ button:disabled {
   border: 0;
   background: #0b6bcb;
   color: #fff;
-  border-radius: 4px;
+  border-radius: 8px;
   height: 24px;
   padding: 0 8px;
   font: inherit;
@@ -4377,7 +4542,7 @@ button:disabled {
 .send {
   height: 32px;
   padding: 0 16px;
-  border-radius: 6px;
+  border-radius: 8px;
   font: inherit;
   cursor: pointer;
 }
@@ -4410,7 +4575,7 @@ button:disabled {
   max-height: calc(100dvh - 32px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
   overflow: auto;
   background: #fff;
-  border-radius: 8px;
+  border-radius: 16px;
   box-shadow: 0 12px 32px rgba(31, 35, 41, 0.16);
   padding: 20px 20px 16px;
 }
@@ -4463,7 +4628,7 @@ button:disabled {
 .chip {
   height: 24px;
   border: 0;
-  border-radius: 6px;
+  border-radius: 12px;
   background: #e7f0fa;
   color: #0b6bcb;
   font: inherit;
@@ -4853,7 +5018,17 @@ button:disabled {
     padding: 8px 10px 4px;
   }
   .composer {
+    margin: 0 8px 8px;
     padding: 0 8px 6px;
+    border-radius: 12px;
+    box-shadow: none;
+  }
+  .msgs {
+    padding: 12px 12px 8px;
+  }
+  .thread-head {
+    min-height: 48px;
+    padding: 8px 10px;
   }
   .editor {
     min-height: 36px;
