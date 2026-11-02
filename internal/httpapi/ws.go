@@ -12,16 +12,19 @@ import (
 )
 
 type wsIncoming struct {
-	Type           string `json:"type"`
-	ConversationID string `json:"conversationId"`
-	Kind           string `json:"kind"`
-	Text           string `json:"text"`
-	Body           string `json:"body"`
-	FileID         string `json:"fileId"`
-	ReplyToID      string `json:"replyToId"`
-	MessageID      string `json:"messageId"`
-	Emoji          string `json:"emoji"`
-	N              int64  `json:"n"`
+	Type           string          `json:"type"`
+	ConversationID string          `json:"conversationId"`
+	Kind           string          `json:"kind"`
+	Text           string          `json:"text"`
+	Body           string          `json:"body"`
+	FileID         string          `json:"fileId"`
+	ReplyToID      string          `json:"replyToId"`
+	MessageID      string          `json:"messageId"`
+	Emoji          string          `json:"emoji"`
+	N              int64           `json:"n"`
+	CallID         string          `json:"callId"`
+	SDP            string          `json:"sdp"`
+	Candidate      json.RawMessage `json:"candidate"`
 }
 
 func (s *server) handleWS(w http.ResponseWriter, r *http.Request) {
@@ -50,6 +53,9 @@ func (s *server) handleWS(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		offline := s.hub.Remove(user.ID, conn)
 		_ = conn.Close(websocket.StatusNormalClosure, "")
+		if s.calls != nil {
+			s.dispatchCall(s.calls.Disconnect(user.ID))
+		}
 		if offline {
 			_, _ = s.db.SQL().Exec(
 				`UPDATE users SET last_seen_at = ? WHERE id = ?`,
@@ -79,6 +85,8 @@ func (s *server) handleWS(w http.ResponseWriter, r *http.Request) {
 			s.handleWSReact(conn, user, in)
 		case "ping":
 			s.writeWSPong(conn, in.N)
+		case "call.invite", "call.accept", "call.reject", "call.hangup", "call.offer", "call.answer", "call.candidate":
+			s.handleCall(conn, user, in)
 		default:
 			s.writeWSError(conn, "未知事件")
 		}

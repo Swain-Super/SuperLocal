@@ -7,28 +7,31 @@ import (
 	"time"
 
 	"superlocal/internal/auth"
+	"superlocal/internal/call"
 	"superlocal/internal/hub"
 	"superlocal/internal/store"
 )
 
 type Deps struct {
-	DB        *store.DB
-	Hub       *hub.Hub
-	DataDir   string
-	MaxUpload int64
+	DB           *store.DB
+	Hub          *hub.Hub
+	DataDir      string
+	MaxUpload    int64
 	Limiter      *auth.Limiter
 	Now          func() time.Time
 	CallsEnabled bool
+	Calls        *call.Session
 }
 
 type server struct {
-	db        *store.DB
-	hub       *hub.Hub
-	dataDir   string
-	maxUpload int64
+	db           *store.DB
+	hub          *hub.Hub
+	dataDir      string
+	maxUpload    int64
 	limiter      *auth.Limiter
 	now          func() time.Time
 	callsEnabled bool
+	calls        *call.Session
 }
 
 func New(deps Deps) http.Handler {
@@ -37,13 +40,23 @@ func New(deps Deps) http.Handler {
 		now = time.Now
 	}
 	s := &server{
-		db:        deps.DB,
-		hub:       deps.Hub,
-		dataDir:   deps.DataDir,
-		maxUpload: deps.MaxUpload,
+		db:           deps.DB,
+		hub:          deps.Hub,
+		dataDir:      deps.DataDir,
+		maxUpload:    deps.MaxUpload,
 		limiter:      deps.Limiter,
 		now:          now,
 		callsEnabled: deps.CallsEnabled,
+		calls:        deps.Calls,
+	}
+	if deps.Calls != nil {
+		go func() {
+			ticker := time.NewTicker(time.Second)
+			defer ticker.Stop()
+			for range ticker.C {
+				s.dispatchCall(s.calls.Sweep(s.now()))
+			}
+		}()
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/session", s.handleLogin)

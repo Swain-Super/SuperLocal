@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"superlocal/internal/auth"
+	"superlocal/internal/call"
 	"superlocal/internal/cleanup"
 	"superlocal/internal/config"
 	"superlocal/internal/httpapi"
@@ -50,10 +51,12 @@ func main() {
 	}()
 
 	hosts := lanIPv4()
+	var calls *call.Session
 	if cfg.TLS {
 		if _, err := tlscert.LoadOrCreate(cfg.DataDir, hosts, time.Now()); err != nil {
 			log.Fatalf("证书写入失败: %v", err)
 		}
+		calls = call.New(time.Now, store.NewID, func(string) call.Turn { return call.Turn{} })
 	}
 	fmt.Print(banner(cfg.Addr, username, password, hosts, cfg.TLS))
 	handler := httpapi.WithStatic(httpapi.New(httpapi.Deps{
@@ -63,6 +66,7 @@ func main() {
 		MaxUpload:    cfg.MaxUpload,
 		Limiter:      auth.NewLimiter(),
 		CallsEnabled: cfg.TLS,
+		Calls:        calls,
 	}))
 	var serveErr error
 	if cfg.TLS {
