@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/rand"
 	"crypto/tls"
 	"fmt"
 	"log"
@@ -19,6 +20,8 @@ import (
 	"superlocal/internal/hub"
 	"superlocal/internal/store"
 	"superlocal/internal/tlscert"
+	"superlocal/internal/turncred"
+	"superlocal/internal/turnserver"
 )
 
 func main() {
@@ -52,11 +55,31 @@ func main() {
 
 	hosts := lanIPv4()
 	var calls *call.Session
+	var turnServer interface{ Close() error }
 	if cfg.TLS {
 		if _, err := tlscert.LoadOrCreate(cfg.DataDir, hosts, time.Now()); err != nil {
 			log.Fatalf("证书写入失败: %v", err)
 		}
-		calls = call.New(time.Now, store.NewID, func(string) call.Turn { return call.Turn{} })
+		secret := make([]byte, 32)
+		if _, err := rand.Read(secret); err != nil {
+			log.Fatal(err)
+		}
+		relay := net.ParseIP("127.0.0.1")
+		if len(hosts) > 0 {
+			if ip := net.ParseIP(hosts[0]); ip != nil {
+				relay = ip
+			}
+		}
+		port := listenPort(cfg.Addr)
+		started, err := turnserver.Listen(":"+port, relay, secret)
+		if err != nil {
+			log.Fatalf("TURN 端口绑定失败: %v", err)
+		}
+		turnServer = started
+		calls = call.New(time.Now, store.NewID, func(userID string) call.Turn {
+			username, credential := turncred.Mint(secret, userID, time.Now())
+			return call.Turn{URLs: turncred.URLs(port, hosts), Username: username, Credential: credential}
+		})
 	}
 	fmt.Print(banner(cfg.Addr, username, password, hosts, cfg.TLS))
 	handler := httpapi.WithStatic(httpapi.New(httpapi.Deps{
@@ -83,6 +106,9 @@ func main() {
 		serveErr = http.ListenAndServe(cfg.Addr, handler)
 	}
 	ticker.Stop()
+	if turnServer != nil {
+		_ = turnServer.Close()
+	}
 	_ = db.SQL().Close()
 	log.Fatal(serveErr)
 }
