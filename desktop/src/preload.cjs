@@ -5,6 +5,8 @@ contextBridge.exposeInMainWorld("launcher", {
   start: (port) => ipcRenderer.invoke("launcher:start", port),
   stop: () => ipcRenderer.invoke("launcher:stop"),
   setPort: (port) => ipcRenderer.invoke("launcher:setPort", port),
+  setDataDir: (dir) => ipcRenderer.invoke("launcher:setDataDir", dir),
+  pickDataDir: () => ipcRenderer.invoke("launcher:pickDataDir"),
   openChat: () => ipcRenderer.invoke("launcher:openChat"),
   openAdmin: () => ipcRenderer.invoke("launcher:openAdmin"),
   refreshAddresses: () => ipcRenderer.invoke("launcher:refreshAddresses"),

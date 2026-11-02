@@ -10,6 +10,8 @@ const username = ref("");
 const password = ref("");
 const secretState = ref("hidden");
 const portText = ref("8080");
+const dataDirText = ref("");
+const dataDirFocused = ref(false);
 const toast = ref("");
 let toastTimer = 0;
 
@@ -42,6 +44,9 @@ function apply(next) {
   username.value = next.username || "";
   password.value = next.password || "";
   secretState.value = next.secretState || "hidden";
+  if (typeof next.dataDir === "string" && !dataDirFocused.value) {
+    dataDirText.value = next.dataDir;
+  }
   if (next.port != null && portLocked.value) {
     portText.value = String(next.port);
   }
@@ -58,6 +63,7 @@ onMounted(async () => {
   const current = await bridge().getState();
   apply(current);
   portText.value = String(current.port);
+  dataDirText.value = current.dataDir || "";
   bridge().onState(apply);
 });
 
@@ -77,6 +83,21 @@ function start() {
 
 function onEnter() {
   start();
+}
+
+function onDataDir() {
+  if (!bridge() || portLocked.value) {
+    return;
+  }
+  dataDirFocused.value = false;
+  bridge().setDataDir(dataDirText.value).then(apply);
+}
+
+function pickDataDir() {
+  if (!bridge() || portLocked.value) {
+    return;
+  }
+  bridge().pickDataDir().then(apply);
 }
 
 function stop() {
@@ -185,7 +206,23 @@ function hostKind(url) {
         </div>
       </div>
       <p v-if="portHint" class="field-error" role="alert">{{ portHint }}</p>
-      <p v-else-if="error" class="error" role="alert">{{ error }}</p>
+      <label class="port-field">
+        <span class="label">数据目录</span>
+        <span class="data-row">
+          <input
+            v-model="dataDirText"
+            :disabled="portLocked"
+            spellcheck="false"
+            autocomplete="off"
+            @focus="dataDirFocused = true"
+            @blur="dataDirFocused = false"
+            @change="onDataDir"
+            @keydown.enter.prevent="onDataDir"
+          />
+          <button type="button" :disabled="portLocked" @click="pickDataDir">选择</button>
+        </span>
+      </label>
+      <p v-if="error && !portHint" class="error" role="alert">{{ error }}</p>
       <div v-if="canOpen" class="open-actions">
         <button class="primary" type="button" @click="bridge() && bridge().openChat()">打开聊天</button>
         <button type="button" @click="bridge() && bridge().openAdmin()">打开后台</button>

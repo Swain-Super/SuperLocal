@@ -1,14 +1,15 @@
-import { app, BrowserWindow, Menu, Tray, clipboard, ipcMain, nativeImage, shell } from "electron";
+import { app, BrowserWindow, Menu, Tray, clipboard, dialog, ipcMain, nativeImage, shell } from "electron";
 import { spawn, execFile } from "node:child_process";
 import fs from "node:fs";
 import https from "node:https";
 import path from "node:path";
 import { applyLanUrls, lanUrls, urlsFromBanner } from "./banner.js";
+import { moveDataDir, normalizeDataDir } from "./datadir.js";
 import { launcherPaths, serviceBinaryPath } from "./paths.js";
 import { decidePid, exeFromCommand, parsePid } from "./pid.js";
 import { parsePort } from "./port.js";
 import { readSecretFile } from "./secret.js";
-import { readSettingsFile, writeSettingsFile } from "./settings.js";
+import { readDataDirFile, readSettingsFile, writeDataDirFile, writeSettingsFile } from "./settings.js";
 import { explainStartupError, requestStop, watchStartup } from "./supervisor.js";
 
 let win = null;
@@ -23,6 +24,10 @@ let state = null;
 
 function userPaths() {
   return launcherPaths(app.getPath("userData"));
+}
+
+function activeDataDir() {
+  return readDataDirFile(userPaths().settings, userPaths().dataDir);
 }
 
 function binaryPath() {
@@ -53,7 +58,7 @@ function refreshAddresses() {
 }
 
 function refreshSecret() {
-  const secret = readSecretFile(userPaths().dataDir);
+  const secret = readSecretFile(activeDataDir());
   state.secretState = secret.secretState;
   state.username = secret.username;
   state.password = secret.password;
@@ -240,7 +245,7 @@ async function runStart(port) {
   const binary = binaryPath();
   const proc = spawn(
     binary,
-    ["-addr", `:${port}`, "-data", userPaths().dataDir, "-max-upload", "200MB"],
+    ["-addr", `:${port}`, "-data", activeDataDir(), "-max-upload", "200MB"],
     { stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
   );
   childPid = proc.pid;
@@ -384,6 +389,41 @@ function updatePort(rawPort) {
   return state;
 }
 
+function updateDataDir(rawDir) {
+  if (!state || state.status === "starting" || state.status === "running") {
+    return state;
+  }
+  const current = activeDataDir();
+  const fallback = userPaths().dataDir;
+  const moved = moveDataDir(current, normalizeDataDir(rawDir, fallback));
+  if (!moved.ok) {
+    state.dataDir = current;
+    state.error = moved.error;
+    publish();
+    return state;
+  }
+  state.dataDir = writeDataDirFile(userPaths().settings, moved.dataDir, userPaths().dataDir);
+  state.error = "";
+  refreshSecret();
+  publish();
+  return state;
+}
+
+async function pickDataDir() {
+  if (!state || state.status === "starting" || state.status === "running") {
+    return state;
+  }
+  const picked = await dialog.showOpenDialog(win ?? undefined, {
+    title: "选择数据目录",
+    defaultPath: state.dataDir || activeDataDir(),
+    properties: ["openDirectory", "createDirectory"],
+  });
+  if (picked.canceled || !picked.filePaths[0]) {
+    return state;
+  }
+  return updateDataDir(picked.filePaths[0]);
+}
+
 function appendTail(current, chunk) {
   const next = current + chunk.toString();
   return next.length > 16384 ? next.slice(-16384) : next;
@@ -509,6 +549,7 @@ if (!gotLock) {
     state = {
       status: "stopped",
       port,
+      dataDir: activeDataDir(),
       error: "",
       chatUrls: [],
       adminUrls: [],
@@ -522,6 +563,8 @@ if (!gotLock) {
     ipcMain.handle("launcher:start", (_event, portValue) => startService(portValue));
     ipcMain.handle("launcher:stop", () => stopService());
     ipcMain.handle("launcher:setPort", (_event, portValue) => updatePort(portValue));
+    ipcMain.handle("launcher:setDataDir", (_event, dir) => updateDataDir(dir));
+    ipcMain.handle("launcher:pickDataDir", () => pickDataDir());
     ipcMain.handle("launcher:openChat", () => {
       openLocal("chat");
       return state;
