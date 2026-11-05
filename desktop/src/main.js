@@ -10,6 +10,7 @@ import { decidePid, exeFromCommand, parsePid } from "./pid.js";
 import { parsePort } from "./port.js";
 import { readSecretFile } from "./secret.js";
 import { readDataDirFile, readSettingsFile, writeDataDirFile, writeSettingsFile } from "./settings.js";
+import { beginQuit } from "./quit.js";
 import { explainStartupError, requestStop, watchStartup } from "./supervisor.js";
 
 let win = null;
@@ -534,14 +535,13 @@ if (!gotLock) {
   app.on("window-all-closed", () => {});
   app.on("activate", () => showWindow());
   app.on("before-quit", (event) => {
-    if (quitting) {
+    const plan = beginQuit(quitting, state && state.status);
+    quitting = plan.quitting;
+    if (!plan.hold) {
       return;
     }
-    if (state && (state.status === "starting" || state.status === "running")) {
-      event.preventDefault();
-      quitting = true;
-      stopService().finally(() => app.quit());
-    }
+    event.preventDefault();
+    stopService().finally(() => app.quit());
   });
 
   app.whenReady().then(async () => {
