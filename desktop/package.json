@@ -1,7 +1,7 @@
 {
   "name": "superlocal-launcher",
   "private": true,
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "局域网聊天桌面程序",
   "author": "SuperLocal",
   "productName": "SuperLocal",
