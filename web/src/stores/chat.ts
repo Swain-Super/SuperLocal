@@ -2,6 +2,7 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { plainText } from '../rich'
 import { bindCallSender, onSignal } from '../call'
+import { bindScreenSender, onScreenSignal } from '../screen'
 import {
   addMembers as apiAddMembers,
   apiErrorMessage,
@@ -588,6 +589,8 @@ export const useChatStore = defineStore('chat', () => {
       default:
         if (event.type?.startsWith('call.')) {
           onSignal(event)
+        } else if (event.type?.startsWith('screen.') && callsEnabled.value) {
+          onScreenSignal(event)
         }
         break
     }
@@ -696,6 +699,7 @@ export const useChatStore = defineStore('chat', () => {
     socket.send(JSON.stringify(payload))
   }
   bindCallSender(sendRaw)
+  bindScreenSender(sendRaw)
 
   function notePong(n: number | undefined) {
     if (typeof n !== 'number') {

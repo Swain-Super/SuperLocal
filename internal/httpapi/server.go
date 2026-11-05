@@ -9,6 +9,7 @@ import (
 	"superlocal/internal/auth"
 	"superlocal/internal/call"
 	"superlocal/internal/hub"
+	"superlocal/internal/screen"
 	"superlocal/internal/store"
 )
 
@@ -21,6 +22,7 @@ type Deps struct {
 	Now          func() time.Time
 	CallsEnabled bool
 	Calls        *call.Session
+	Screens      *screen.Session
 }
 
 type server struct {
@@ -32,6 +34,7 @@ type server struct {
 	now          func() time.Time
 	callsEnabled bool
 	calls        *call.Session
+	screens      *screen.Session
 }
 
 func New(deps Deps) http.Handler {
@@ -48,13 +51,19 @@ func New(deps Deps) http.Handler {
 		now:          now,
 		callsEnabled: deps.CallsEnabled,
 		calls:        deps.Calls,
+		screens:      deps.Screens,
 	}
-	if deps.Calls != nil {
+	if deps.Calls != nil || deps.Screens != nil {
 		go func() {
 			ticker := time.NewTicker(time.Second)
 			defer ticker.Stop()
 			for range ticker.C {
-				s.dispatchCall(s.calls.Sweep(s.now()))
+				if s.calls != nil {
+					s.dispatchCall(s.calls.Sweep(s.now()))
+				}
+				if s.screens != nil {
+					s.dispatchScreen(s.screens.Sweep(s.now()))
+				}
 			}
 		}()
 	}

@@ -37,6 +37,18 @@ import {
   toggleMute as toggleCallMute,
 } from '../call'
 import {
+  acceptScreen,
+  canShareScreen,
+  chooseScreen,
+  dismissScreen,
+  hangupScreen,
+  rejectScreen,
+  remoteScreen,
+  screen,
+  startScreen,
+} from '../screen'
+import { screenStatusText } from '../screenState'
+import {
   formatBytes,
   formatStamp,
   listPreview,
@@ -74,6 +86,57 @@ function onStartCall(kind: 'audio' | 'video') {
     return
   }
   void startCall(store.active.id, kind, store.active.title, store.callsEnabled)
+}
+const shareHint = ref('')
+const inviteCover = ref<'call' | 'screen'>('call')
+watch(() => call.phase, (phase, prev) => {
+  if (phase === 'incoming' && prev !== 'incoming') {
+    inviteCover.value = 'call'
+  }
+})
+watch(() => screen.phase, (phase, prev) => {
+  if (phase === 'incoming' && prev !== 'incoming') {
+    inviteCover.value = 'screen'
+  }
+})
+watch(() => store.active?.id, () => {
+  shareHint.value = ''
+})
+const dockCall = computed(() => {
+  const sharing = screen.phase === 'choosing' || screen.phase === 'connecting' || screen.phase === 'active'
+  const calling = call.phase === 'outgoing' || call.phase === 'connecting' || call.phase === 'active'
+  return sharing && calling
+})
+const callInviteFront = computed(() => call.phase === 'incoming' && !(screen.phase === 'incoming' && inviteCover.value === 'screen'))
+const screenInviteFront = computed(() => screen.phase === 'incoming' && (call.phase !== 'incoming' || inviteCover.value === 'screen'))
+const showScreenVideo = computed(() => screen.role === 'viewer' && (screen.phase === 'connecting' || screen.phase === 'active') && !!remoteScreen.value)
+function bindScreenVideo(el: unknown) {
+  if (el instanceof HTMLVideoElement && remoteScreen.value) {
+    el.srcObject = remoteScreen.value
+  }
+}
+function onShareScreen() {
+  if (screen.phase === 'failed') {
+    dismissScreen()
+    return
+  }
+  if (screen.phase === 'incoming') {
+    rejectScreen()
+    return
+  }
+  if (screen.phase !== 'idle') {
+    hangupScreen()
+    return
+  }
+  if (!store.active) {
+    return
+  }
+  if (!canShareScreen()) {
+    shareHint.value = '当前设备无法共享屏幕'
+    return
+  }
+  shareHint.value = ''
+  startScreen(store.active.id, store.active.title, store.callsEnabled)
 }
 const callConv = computed(() => {
   const id = call.conversationId
@@ -2319,6 +2382,8 @@ onUnmounted(() => {
             <span class="head-actions">
               <button v-if="canCall" type="button" class="head-btn" @click="onStartCall('audio')">语音</button>
               <button v-if="canCall" type="button" class="head-btn" @click="onStartCall('video')">视频</button>
+              <button v-if="canCall" type="button" class="head-btn" @click="onShareScreen">共享屏幕</button>
+              <span v-if="shareHint" class="share-hint">{{ shareHint }}</span>
               <button v-if="store.active.type === 'group'" type="button" class="head-btn" @click="membersOpen = !membersOpen">成员</button>
               <button
                 v-if="isOwner(store.active)"
@@ -2334,7 +2399,7 @@ onUnmounted(() => {
           <button v-if="narrow" type="button" class="head-btn" @click="openProfile">个人资料</button>
           <span v-if="!(narrow && !showThread)" class="latency" :class="latencyLevel" :title="`网络延迟 ${latencyText}`">{{ latencyText }}</span>
         </header>
-        <div v-if="call.phase !== 'idle'" class="call-layer">
+        <div v-if="call.phase !== 'idle'" class="call-layer" :class="{ 'call-layer-dock': dockCall, 'call-layer-front': callInviteFront }">
           <video v-if="showRemoteVideo" :ref="bindRemoteVideo" class="call-remote" autoplay playsinline></video>
           <div v-if="showRemoteVideo" class="call-top">
             <p class="call-name">{{ callTitle }}</p>
@@ -2383,6 +2448,46 @@ onUnmounted(() => {
               <span class="call-key-label">挂断</span>
             </button>
             <button v-if="call.phase === 'failed'" type="button" class="call-key accept" @click="dismissCall">
+              <span class="call-key-face call-key-word">知道了</span>
+            </button>
+          </div>
+        </div>
+        <div v-if="screen.phase !== 'idle'" class="screen-layer" :class="{ 'screen-layer-front': screenInviteFront }">
+          <video v-if="showScreenVideo" :ref="bindScreenVideo" class="screen-remote" autoplay playsinline></video>
+          <div v-if="showScreenVideo" class="call-top">
+            <p class="call-name">{{ screen.peerName || store.active?.title }}</p>
+            <p class="call-reason">{{ screenStatusText(screen) }}</p>
+          </div>
+          <div v-else class="call-hero">
+            <span class="call-avatar" :class="{ pulse: screen.phase === 'outgoing' || screen.phase === 'incoming' }">
+              <span class="call-avatar-face">{{ initial(screen.peerName || store.active?.title || '') }}</span>
+            </span>
+            <p class="call-name">{{ screen.peerName || store.active?.title }}</p>
+            <p class="call-reason">{{ screenStatusText(screen) }}</p>
+          </div>
+          <div class="call-actions">
+            <button v-if="screen.phase === 'incoming'" type="button" class="call-key hangup" @click="rejectScreen">
+              <span class="call-key-face">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.2 3.8h2.2l1.1 2.7-1.6 1a11 11 0 0 0 5.4 5.4l1-1.6 2.7 1.1v2.2a1.8 1.8 0 0 1-1.6 1.8 12.2 12.2 0 0 1-11.2-11.2 1.8 1.8 0 0 1 1.8-1.6z"/></svg>
+              </span>
+              <span class="call-key-label">拒绝</span>
+            </button>
+            <button v-if="screen.phase === 'incoming'" type="button" class="call-key accept" @click="acceptScreen">
+              <span class="call-key-face">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.2 3.8h2.2l1.1 2.7-1.6 1a11 11 0 0 0 5.4 5.4l1-1.6 2.7 1.1v2.2a1.8 1.8 0 0 1-1.6 1.8 12.2 12.2 0 0 1-11.2-11.2 1.8 1.8 0 0 1 1.8-1.6z"/></svg>
+              </span>
+              <span class="call-key-label">接受</span>
+            </button>
+            <button v-if="screen.phase === 'choosing'" type="button" class="call-key accept" @click="chooseScreen">
+              <span class="call-key-face call-key-word">选择屏幕</span>
+            </button>
+            <button v-if="screen.phase === 'outgoing' || screen.phase === 'choosing' || screen.phase === 'connecting' || screen.phase === 'active'" type="button" class="call-key hangup" @click="hangupScreen">
+              <span class="call-key-face">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.2 3.8h2.2l1.1 2.7-1.6 1a11 11 0 0 0 5.4 5.4l1-1.6 2.7 1.1v2.2a1.8 1.8 0 0 1-1.6 1.8 12.2 12.2 0 0 1-11.2-11.2 1.8 1.8 0 0 1 1.8-1.6z"/></svg>
+              </span>
+              <span class="call-key-label">{{ screen.role === 'viewer' ? '结束观看' : '结束共享' }}</span>
+            </button>
+            <button v-if="screen.phase === 'failed'" type="button" class="call-key accept" @click="dismissScreen">
               <span class="call-key-face call-key-word">知道了</span>
             </button>
           </div>
@@ -3919,6 +4024,56 @@ onUnmounted(() => {
   border-radius: 22px;
   font-size: 15px;
   font-weight: 600;
+}
+.share-hint {
+  color: #646a73;
+  font-size: 12px;
+  line-height: 1.2;
+}
+.screen-layer {
+  position: absolute;
+  z-index: 9;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  overflow: hidden;
+  background: #1f2329;
+  color: #fff;
+}
+.screen-layer-front {
+  z-index: 12;
+}
+.screen-remote {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #1f2329;
+}
+.call-layer-front {
+  z-index: 12;
+}
+.call-layer-dock {
+  inset: auto 16px 24px auto;
+  z-index: 13;
+  width: auto;
+  height: auto;
+  background: transparent;
+}
+.call-layer-dock .call-hero,
+.call-layer-dock .call-remote,
+.call-layer-dock .call-top,
+.call-layer-dock .call-local {
+  display: none;
+}
+.call-layer-dock .call-actions {
+  width: auto;
+  padding: 0;
+  gap: 12px;
+  background: transparent;
 }
 .call-key:hover .call-key-face {
   background: #e7f0fa;

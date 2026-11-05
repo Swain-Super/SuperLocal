@@ -23,6 +23,7 @@ type wsIncoming struct {
 	Emoji          string          `json:"emoji"`
 	N              int64           `json:"n"`
 	CallID         string          `json:"callId"`
+	ScreenID       string          `json:"screenId"`
 	SDP            string          `json:"sdp"`
 	Candidate      json.RawMessage `json:"candidate"`
 }
@@ -56,6 +57,9 @@ func (s *server) handleWS(w http.ResponseWriter, r *http.Request) {
 		if s.calls != nil {
 			s.dispatchCall(s.calls.Disconnect(user.ID))
 		}
+		if s.screens != nil {
+			s.dispatchScreen(s.screens.Disconnect(user.ID))
+		}
 		if offline {
 			_, _ = s.db.SQL().Exec(
 				`UPDATE users SET last_seen_at = ? WHERE id = ?`,
@@ -87,6 +91,8 @@ func (s *server) handleWS(w http.ResponseWriter, r *http.Request) {
 			s.writeWSPong(conn, in.N)
 		case "call.invite", "call.accept", "call.reject", "call.hangup", "call.offer", "call.answer", "call.candidate":
 			s.handleCall(conn, user, in)
+		case "screen.invite", "screen.accept", "screen.reject", "screen.hangup", "screen.offer", "screen.answer", "screen.candidate":
+			s.handleScreen(conn, user, in)
 		default:
 			s.writeWSError(conn, "未知事件")
 		}

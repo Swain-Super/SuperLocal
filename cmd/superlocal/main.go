@@ -18,6 +18,7 @@ import (
 	"superlocal/internal/config"
 	"superlocal/internal/httpapi"
 	"superlocal/internal/hub"
+	"superlocal/internal/screen"
 	"superlocal/internal/store"
 	"superlocal/internal/tlscert"
 	"superlocal/internal/turncred"
@@ -55,6 +56,7 @@ func main() {
 
 	hosts := lanIPv4()
 	var calls *call.Session
+	var screens *screen.Session
 	var turnServer interface{ Close() error }
 	if cfg.TLS {
 		if _, err := tlscert.LoadOrCreate(cfg.DataDir, hosts, time.Now()); err != nil {
@@ -80,6 +82,10 @@ func main() {
 			username, credential := turncred.Mint(secret, userID, time.Now())
 			return call.Turn{URLs: turncred.URLs(port, hosts), Username: username, Credential: credential}
 		})
+		screens = screen.New(time.Now, store.NewID, func(userID string) screen.Turn {
+			username, credential := turncred.Mint(secret, userID, time.Now())
+			return screen.Turn{URLs: turncred.URLs(port, hosts), Username: username, Credential: credential}
+		})
 	}
 	fmt.Print(banner(cfg.Addr, username, password, hosts, cfg.TLS))
 	handler := httpapi.WithStatic(httpapi.New(httpapi.Deps{
@@ -90,6 +96,7 @@ func main() {
 		Limiter:      auth.NewLimiter(),
 		CallsEnabled: cfg.TLS,
 		Calls:        calls,
+		Screens:      screens,
 	}))
 	var serveErr error
 	if cfg.TLS {
