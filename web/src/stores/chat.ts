@@ -2,6 +2,7 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { plainText } from '../rich'
 import { bindCallSender, onSignal } from '../call'
+import { isHttpsPage } from '../httpsPage'
 import { bindScreenSender, onScreenSignal } from '../screen'
 import {
   addMembers as apiAddMembers,
@@ -587,9 +588,12 @@ export const useChatStore = defineStore('chat', () => {
         ban()
         break
       default:
+        if (!isHttpsPage(location.protocol) || !callsEnabled.value) {
+          break
+        }
         if (event.type?.startsWith('call.')) {
           onSignal(event)
-        } else if (event.type?.startsWith('screen.') && callsEnabled.value) {
+        } else if (event.type?.startsWith('screen.')) {
           onScreenSignal(event)
         }
         break

@@ -10,7 +10,7 @@ import (
 )
 
 func (s *server) handleCall(conn *websocket.Conn, user store.User, in wsIncoming) {
-	if s.calls == nil {
+	if s.calls == nil || !s.isSecure(conn) {
 		s.writeWSError(conn, "通话不可用")
 		return
 	}
@@ -50,18 +50,15 @@ func (s *server) callMembers(convID, selfID string) ([]string, bool) {
 	if peer == selfID {
 		peer = members[1]
 	}
-	return members, s.hub != nil && s.hub.OnlineIDs()[peer]
+	return members, s.secureOnline(peer)
 }
 
 func (s *server) dispatchCall(deliveries []call.Delivery) {
-	if s.hub == nil {
-		return
-	}
 	for _, delivery := range deliveries {
 		payload, err := json.Marshal(delivery.Event)
 		if err != nil {
 			continue
 		}
-		s.hub.Send(delivery.UserIDs, payload)
+		s.sendSecure(delivery.UserIDs, payload)
 	}
 }

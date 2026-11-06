@@ -10,7 +10,7 @@ import (
 )
 
 func (s *server) handleScreen(conn *websocket.Conn, user store.User, in wsIncoming) {
-	if s.screens == nil {
+	if s.screens == nil || !s.isSecure(conn) {
 		s.writeWSError(conn, "屏幕共享不可用")
 		return
 	}
@@ -38,14 +38,11 @@ func (s *server) handleScreen(conn *websocket.Conn, user store.User, in wsIncomi
 }
 
 func (s *server) dispatchScreen(deliveries []screen.Delivery) {
-	if s.hub == nil {
-		return
-	}
 	for _, delivery := range deliveries {
 		payload, err := json.Marshal(delivery.Event)
 		if err != nil {
 			continue
 		}
-		s.hub.Send(delivery.UserIDs, payload)
+		s.sendSecure(delivery.UserIDs, payload)
 	}
 }

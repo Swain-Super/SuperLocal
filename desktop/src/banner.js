@@ -41,6 +41,17 @@ function isShareable(urlText) {
   }
 }
 
+// urlsForHosts 对每个地址先给 https，再给 http。聊天和后台分开。
+export function urlsForHosts(port, addresses) {
+  const chatUrls = [];
+  const adminUrls = [];
+  for (const address of addresses) {
+    chatUrls.push(`https://${address}:${port}/`, `http://${address}:${port}/`);
+    adminUrls.push(`https://${address}:${port}/admin`, `http://${address}:${port}/admin`);
+  }
+  return { chatUrls, adminUrls };
+}
+
 // lanUrls 列出本机局域网 IPv4 上的聊天页和后台页。
 export function lanUrls(port) {
   const chatUrls = [];
@@ -55,8 +66,9 @@ export function lanUrls(port) {
         continue;
       }
       seen.add(addr.address);
-      chatUrls.push(`https://${addr.address}:${port}/`);
-      adminUrls.push(`https://${addr.address}:${port}/admin`);
+      const pair = urlsForHosts(port, [addr.address]);
+      chatUrls.push(...pair.chatUrls);
+      adminUrls.push(...pair.adminUrls);
     }
   }
   return { chatUrls, adminUrls };

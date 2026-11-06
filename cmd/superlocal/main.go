@@ -2,7 +2,6 @@ package main
 
 import (
 	"crypto/rand"
-	"crypto/tls"
 	"fmt"
 	"log"
 	"net"
@@ -16,6 +15,7 @@ import (
 	"superlocal/internal/call"
 	"superlocal/internal/cleanup"
 	"superlocal/internal/config"
+	"superlocal/internal/dualserve"
 	"superlocal/internal/httpapi"
 	"superlocal/internal/hub"
 	"superlocal/internal/screen"
@@ -104,11 +104,11 @@ func main() {
 		if err != nil {
 			log.Fatalf("证书写入失败: %v", err)
 		}
-		ln, err := tls.Listen("tcp", cfg.Addr, &tls.Config{Certificates: []tls.Certificate{cert}})
+		ln, err := net.Listen("tcp", cfg.Addr)
 		if err != nil {
 			log.Fatal(err)
 		}
-		serveErr = http.Serve(ln, handler)
+		serveErr = dualserve.Serve(ln, cert, handler)
 	} else {
 		serveErr = http.ListenAndServe(cfg.Addr, handler)
 	}
@@ -127,15 +127,17 @@ func banner(port, username, password string, addrs []string, secure bool) string
 	hosts := make([]string, 0, 1+len(addrs))
 	hosts = append(hosts, "127.0.0.1")
 	hosts = append(hosts, addrs...)
-	scheme := "http"
-	if secure {
-		scheme = "https"
-	}
-
 	var b strings.Builder
 	for _, host := range hosts {
-		fmt.Fprintf(&b, "%s://%s:%s/\n", scheme, host, p)
-		fmt.Fprintf(&b, "%s://%s:%s/admin\n", scheme, host, p)
+		if secure {
+			fmt.Fprintf(&b, "https://%s:%s/\n", host, p)
+			fmt.Fprintf(&b, "https://%s:%s/admin\n", host, p)
+			fmt.Fprintf(&b, "http://%s:%s/\n", host, p)
+			fmt.Fprintf(&b, "http://%s:%s/admin\n", host, p)
+			continue
+		}
+		fmt.Fprintf(&b, "http://%s:%s/\n", host, p)
+		fmt.Fprintf(&b, "http://%s:%s/admin\n", host, p)
 	}
 	fmt.Fprintf(&b, "账号 %s\n密码 %s\n", username, password)
 	return b.String()

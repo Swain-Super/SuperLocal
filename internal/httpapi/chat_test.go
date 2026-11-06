@@ -2,6 +2,7 @@ package httpapi_test
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
 	"io"
 	"mime/multipart"
@@ -688,6 +689,9 @@ func loginClient(t *testing.T, base, key, nickname string) apiClient {
 		t.Fatal(err)
 	}
 	c := &http.Client{Jar: jar}
+	if strings.HasPrefix(base, "https://") {
+		c.Transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+	}
 	payload, _ := json.Marshal(map[string]string{"key": key, "nickname": nickname})
 	res, err := c.Post(base+"/api/session", "application/json", bytes.NewReader(payload))
 	if err != nil {

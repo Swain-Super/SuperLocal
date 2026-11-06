@@ -24,7 +24,7 @@ func TestCallSignaling(t *testing.T) {
 	calls := call.New(func() time.Time { return now }, func(time.Time) string { return "call-fixed" }, func(string) call.Turn {
 		return call.Turn{URLs: []string{"stun:127.0.0.1:9"}, Username: "u", Credential: "p"}
 	})
-	srv := httptest.NewServer(httpapi.New(httpapi.Deps{
+	srv := httptest.NewTLSServer(httpapi.New(httpapi.Deps{
 		DB:        db,
 		Hub:       h,
 		DataDir:   t.TempDir(),

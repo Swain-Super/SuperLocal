@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { applyLanUrls, lanUrls, parseBanner, urlsFromBanner } from "../src/banner.js";
+import { applyLanUrls, lanUrls, parseBanner, urlsForHosts, urlsFromBanner } from "../src/banner.js";
 
 const sample = `https://127.0.0.1:9090/
 https://127.0.0.1:9090/admin
@@ -68,6 +68,38 @@ test("切换 IP 后换成新地址", () => {
   assert.equal(applied.changed, true);
   assert.deepEqual(applied.chatUrls, ["http://10.0.0.8:8080/"]);
   assert.deepEqual(applied.adminUrls, ["http://10.0.0.8:8080/admin"]);
+});
+
+test("每个局域网地址先列 https 再列 http", () => {
+  assert.deepEqual(urlsForHosts(8080, ["192.168.1.8", "10.0.0.2"]), {
+    chatUrls: [
+      "https://192.168.1.8:8080/",
+      "http://192.168.1.8:8080/",
+      "https://10.0.0.2:8080/",
+      "http://10.0.0.2:8080/",
+    ],
+    adminUrls: [
+      "https://192.168.1.8:8080/admin",
+      "http://192.168.1.8:8080/admin",
+      "https://10.0.0.2:8080/admin",
+      "http://10.0.0.2:8080/admin",
+    ],
+  });
+});
+
+test("局域网的 http 和 https 都保留", () => {
+  const text = [
+    "https://192.168.1.8:9090/",
+    "https://192.168.1.8:9090/admin",
+    "http://192.168.1.8:9090/",
+    "http://192.168.1.8:9090/admin",
+    "http://127.0.0.1:9090/",
+    "http://127.0.0.1:9090/admin",
+  ].join("\n");
+  assert.deepEqual(urlsFromBanner(text, 9090), {
+    chatUrls: ["https://192.168.1.8:9090/", "http://192.168.1.8:9090/"],
+    adminUrls: ["https://192.168.1.8:9090/admin", "http://192.168.1.8:9090/admin"],
+  });
 });
 
 test("采纳残留进程时列出局域网地址", () => {

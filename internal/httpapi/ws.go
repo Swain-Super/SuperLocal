@@ -47,12 +47,15 @@ func (s *server) handleWS(w http.ResponseWriter, r *http.Request) {
 
 	wasOffline := !s.hub.OnlineIDs()[user.ID]
 	s.hub.Add(user.ID, conn)
+	if r.TLS != nil {
+		s.trackSecure(user.ID, conn)
+	}
 	if wasOffline {
 		s.broadcastPresence(user.ID, true)
 	}
 
 	defer func() {
-		offline := s.hub.Remove(user.ID, conn)
+		offline := s.dropConn(user.ID, conn)
 		_ = conn.Close(websocket.StatusNormalClosure, "")
 		if s.calls != nil {
 			s.dispatchCall(s.calls.Disconnect(user.ID))

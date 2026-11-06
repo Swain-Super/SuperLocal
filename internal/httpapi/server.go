@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"sync"
 	"time"
+
+	"github.com/coder/websocket"
 
 	"superlocal/internal/auth"
 	"superlocal/internal/call"
@@ -35,6 +38,9 @@ type server struct {
 	callsEnabled bool
 	calls        *call.Session
 	screens      *screen.Session
+	mu           sync.Mutex
+	secureUsers  map[string]map[*websocket.Conn]struct{}
+	secureConns  map[*websocket.Conn]struct{}
 }
 
 func New(deps Deps) http.Handler {
@@ -52,6 +58,8 @@ func New(deps Deps) http.Handler {
 		callsEnabled: deps.CallsEnabled,
 		calls:        deps.Calls,
 		screens:      deps.Screens,
+		secureUsers:  map[string]map[*websocket.Conn]struct{}{},
+		secureConns:  map[*websocket.Conn]struct{}{},
 	}
 	if deps.Calls != nil || deps.Screens != nil {
 		go func() {

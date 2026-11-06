@@ -48,6 +48,7 @@ import {
   startScreen,
 } from '../screen'
 import { screenStatusText } from '../screenState'
+import { isHttpsPage } from '../httpsPage'
 import {
   formatBytes,
   formatStamp,
@@ -70,7 +71,7 @@ function loadCodeApi() {
 
 const store = useChatStore()
 const router = useRouter()
-const canCall = computed(() => store.callsEnabled && window.isSecureContext && store.active?.type === 'direct')
+const canCall = computed(() => store.callsEnabled && isHttpsPage(location.protocol) && store.active?.type === 'direct')
 function bindRemoteVideo(el: unknown) {
   if (el instanceof HTMLVideoElement && remoteStream.value) {
     el.srcObject = remoteStream.value

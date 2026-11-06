@@ -1,5 +1,6 @@
 import { reactive, ref } from 'vue'
 import { idleCall, reduceCall, type CallEvent, type CallView } from './callState'
+import { isHttpsPage } from './httpsPage'
 
 export const call = reactive<CallView>(idleCall())
 export const localStream = ref<MediaStream | null>(null)
@@ -44,7 +45,7 @@ export function onSignal(event: Signal) {
 }
 
 export async function startCall(conversationId: string, kind: 'audio' | 'video', peerName: string, enabled: boolean) {
-  if (!enabled || !window.isSecureContext || call.phase !== 'idle') {
+  if (!enabled || !isHttpsPage(location.protocol) || call.phase !== 'idle') {
     return
   }
   let stream: MediaStream

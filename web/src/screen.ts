@@ -1,5 +1,6 @@
 import { reactive, ref } from 'vue'
 import { idleScreen, outgoingScreen, reduceScreen, type ScreenEvent, type ScreenView } from './screenState'
+import { isHttpsPage } from './httpsPage'
 
 export const screen = reactive<ScreenView>(idleScreen())
 export const remoteScreen = ref<MediaStream | null>(null)
@@ -44,7 +45,7 @@ export function onScreenSignal(event: Signal) {
 }
 
 export function startScreen(conversationId: string, peerName: string, enabled: boolean): boolean {
-  if (!enabled || !window.isSecureContext || screen.phase !== 'idle' || !canShareScreen()) {
+  if (!enabled || !isHttpsPage(location.protocol) || screen.phase !== 'idle' || !canShareScreen()) {
     return false
   }
   Object.assign(screen, outgoingScreen(conversationId, peerName))

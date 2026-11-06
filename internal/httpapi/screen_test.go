@@ -28,7 +28,7 @@ func TestScreenSignaling(t *testing.T) {
 	screens := screen.New(func() time.Time { return now }, func(time.Time) string { return "screen-fixed" }, func(string) screen.Turn {
 		return screen.Turn{URLs: []string{"stun:127.0.0.1:9"}, Username: "u", Credential: "p"}
 	})
-	srv := httptest.NewServer(httpapi.New(httpapi.Deps{
+	srv := httptest.NewTLSServer(httpapi.New(httpapi.Deps{
 		DB:        db,
 		Hub:       h,
 		DataDir:   t.TempDir(),
@@ -117,5 +117,73 @@ func TestScreenSignaling(t *testing.T) {
 	hung := readWSType(t, jiaConn, "screen.hangup", 3*time.Second)
 	if hung["screenId"] == "" {
 		t.Fatalf("%#v", hung)
+	}
+}
+
+func TestPlainHTTPRejectsMedia(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	db := openHTTPDB(t)
+	calls := call.New(func() time.Time { return now }, func(time.Time) string { return "call-fixed" }, func(string) call.Turn {
+		return call.Turn{}
+	})
+	screens := screen.New(func() time.Time { return now }, func(time.Time) string { return "screen-fixed" }, func(string) screen.Turn {
+		return screen.Turn{}
+	})
+	srv := httptest.NewServer(httpapi.New(httpapi.Deps{
+		DB:        db,
+		Hub:       hub.New(),
+		DataDir:   t.TempDir(),
+		MaxUpload: 1024,
+		Limiter:   auth.NewLimiter(),
+		Now:       func() time.Time { return now },
+		Calls:     calls,
+		Screens:   screens,
+	}))
+	t.Cleanup(srv.Close)
+
+	jia := loginClient(t, srv.URL, "plain-key-jia", "甲")
+	yi := loginClient(t, srv.URL, "plain-key-yi", "乙")
+	yiID := getMe(t, yi.client, srv.URL)["id"].(string)
+	openBody, _ := json.Marshal(map[string]string{"userId": yiID})
+	openRes, err := jia.client.Post(srv.URL+"/api/conversations/direct", "application/json", bytes.NewReader(openBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	openRaw, _ := io.ReadAll(openRes.Body)
+	openRes.Body.Close()
+	var opened map[string]string
+	if err := json.Unmarshal(openRaw, &opened); err != nil {
+		t.Fatal(err)
+	}
+
+	jiaConn := dialWS(t, srv.URL, jia.client)
+	yiConn := dialWS(t, srv.URL, yi.client)
+	t.Cleanup(func() {
+		_ = jiaConn.Close(websocket.StatusNormalClosure, "")
+		_ = yiConn.Close(websocket.StatusNormalClosure, "")
+	})
+
+	callInvite, _ := json.Marshal(map[string]string{"type": "call.invite", "conversationId": opened["id"], "kind": "audio"})
+	writeWS(t, jiaConn, callInvite)
+	callErr := readWSType(t, jiaConn, "error", 3*time.Second)
+	if callErr["error"] != "通话不可用" {
+		t.Fatalf("%#v", callErr)
+	}
+	waitCtx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	_, data, err := yiConn.Read(waitCtx)
+	if err == nil {
+		var extra map[string]any
+		_ = json.Unmarshal(data, &extra)
+		if extra["type"] == "call.invite" {
+			t.Fatalf("plain http forwarded call: %s", data)
+		}
+	}
+
+	screenInvite, _ := json.Marshal(map[string]string{"type": "screen.invite", "conversationId": opened["id"]})
+	writeWS(t, jiaConn, screenInvite)
+	screenErr := readWSType(t, jiaConn, "error", 3*time.Second)
+	if screenErr["error"] != "屏幕共享不可用" {
+		t.Fatalf("%#v", screenErr)
 	}
 }
