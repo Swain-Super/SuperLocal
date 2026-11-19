@@ -2970,10 +2970,6 @@ onUnmounted(() => {
             <dt>免打扰</dt>
             <dd>设置里打开后，别人不能给你发私聊，群聊不受影响。会话上的消息免打扰只是不再提醒。</dd>
           </div>
-          <div>
-            <dt>使用问题</dt>
-            <dd>有使用问题可以找诗文修改。</dd>
-          </div>
         </dl>
         <div class="actions">
           <button type="button" class="btn primary" @click="helpOpen = false">知道了</button>
