@@ -390,3 +390,9 @@ export async function features(): Promise<{ calls: boolean }> {
   const response = await http.get<{ calls?: boolean }>('/api/features')
   return { calls: response.data?.calls === true }
 }
+
+export async function joinURL(): Promise<string> {
+  const response = await http.get<{ url?: string }>('/api/join')
+  const url = response.data?.url
+  return typeof url === 'string' ? url : ''
+}

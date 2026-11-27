@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiErrorMessage, checkedKey, keyRuleMessage, login } from '../api'
+import JoinCode from '../components/JoinCode.vue'
 
 const router = useRouter()
 const key = ref('')
@@ -105,6 +106,7 @@ async function onSubmit() {
       <button class="primary" type="submit" :disabled="submitting">进入</button>
       <button class="ghost" type="button" :disabled="submitting" @click="registerOnce">一键注册</button>
       <p v-if="formError" class="error">{{ formError }}</p>
+      <JoinCode />
     </form>
   </main>
 </template>

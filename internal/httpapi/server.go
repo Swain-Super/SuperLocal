@@ -106,6 +106,7 @@ func New(deps Deps) http.Handler {
 
 	mux.HandleFunc("GET /api/ws", s.handleWS)
 	mux.HandleFunc("GET /api/features", s.handleFeatures)
+	mux.HandleFunc("GET /api/join", s.handleJoin)
 
 	mux.HandleFunc("POST /api/admin/session", s.handleAdminLogin)
 	mux.HandleFunc("POST /api/admin/logout", s.handleAdminLogout)

@@ -49,6 +49,7 @@ import {
 } from '../screen'
 import { screenStatusText } from '../screenState'
 import { isHttpsPage } from '../httpsPage'
+import JoinCode from '../components/JoinCode.vue'
 import {
   formatBytes,
   formatStamp,
@@ -2949,6 +2950,7 @@ onUnmounted(() => {
     <div v-if="helpOpen" class="mask" @click.self="helpOpen = false">
       <div class="card help-card">
         <h2>帮助</h2>
+        <JoinCode />
         <dl>
           <div>
             <dt>账号</dt>
